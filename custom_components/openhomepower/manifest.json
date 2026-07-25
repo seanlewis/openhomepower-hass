@@ -11,6 +11,6 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "requirements": [
-    "asyncssh>=2.14"
+    "asyncssh>=2.14,<2.24"
   ]
 }

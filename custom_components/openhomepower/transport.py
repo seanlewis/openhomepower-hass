@@ -80,7 +80,13 @@ class Gateway:
                     port=self.creds.port,
                     username=self.creds.username,
                     password=self.creds.password,
-                    known_hosts=None,          # consumer kit, no host key to pin
+                    # Host key verification is disabled: this is a LAN appliance
+                    # with no key infrastructure, and its login credentials are
+                    # the manufacturer's own published defaults, identical on
+                    # every unit. There is no secret here for a MITM to steal,
+                    # and the session is read-only. Revisit if writes are ever
+                    # added.
+                    known_hosts=None,
                     client_keys=None,
                 ),
                 CONNECT_TIMEOUT,
