@@ -63,8 +63,9 @@ that bridges the battery's BMS to WiFi. Its vendor daemon logs every BMS poll to
 a file; this integration reads that log over SSH and decodes the register frames.
 
 It never writes anything, never touches the serial line, and never sends your
-data anywhere. The protocol and register map are documented in
-[`PROTOCOL.md`](https://github.com/seanlewis/openhomepower-app/blob/main/PROTOCOL.md).
+data anywhere. The register map — every field, its scale, and how confident we
+are in it — is in
+[`registers.yaml`](custom_components/openhomepower/registers.yaml).
 
 ## Will it work with my battery?
 
@@ -78,11 +79,10 @@ portal shows — that is how support for other hardware gets added.
 
 ## Not a Home Assistant user?
 
-There is a standalone desktop app that needs no Home Assistant, no MQTT and no
-YAML: **[OpenHomepower app](https://github.com/seanlewis/openhomepower-app)**.
-
-The two are entirely separate projects — separate installs, no shared
-dependency. They only share a published protocol specification.
+A standalone desktop app is in development for owners who do not run Home
+Assistant — no HA, no MQTT, no YAML, just a window showing your battery. It will
+be a separate project with its own install; the two share only a published
+protocol specification, not code.
 
 ## Development
 

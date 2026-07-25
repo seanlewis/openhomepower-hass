@@ -1,16 +1,16 @@
 {
   "domain": "openhomepower",
   "name": "OpenHomepower",
-  "version": "0.1.0",
-  "documentation": "https://github.com/seanlewis/openhomepower-hass",
-  "issue_tracker": "https://github.com/seanlewis/openhomepower-hass/issues",
   "codeowners": [
     "@seanlewis"
   ],
   "config_flow": true,
+  "documentation": "https://github.com/seanlewis/openhomepower-hass",
   "integration_type": "device",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/seanlewis/openhomepower-hass/issues",
   "requirements": [
     "asyncssh>=2.14,<2.24"
-  ]
+  ],
+  "version": "0.1.0"
 }
