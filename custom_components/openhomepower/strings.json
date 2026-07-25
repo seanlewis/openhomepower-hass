@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your Homepower",
+        "description": "Enter your battery's address. Auto-discovery found: {found}\n\nThe defaults below are the manufacturer's own published values and work on unmodified units.",
+        "data": {
+          "host": "IP address or hostname",
+          "port": "SSH port",
+          "username": "Username",
+          "password": "Password",
+          "poll_seconds": "Poll interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the battery. Check the address, and note the gateway briefly drops off WiFi from time to time — try again.",
+      "invalid_auth": "The username or password was rejected.",
+      "no_data": "Connected, but no telemetry could be decoded. Is the vendor daemon running?",
+      "unknown": "Unexpected error. Check the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This battery is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenHomepower options",
+        "description": "The battery only refreshes its data every 15-20 seconds at best, and minutes apart when idle, so polling faster gains nothing.",
+        "data": { "poll_seconds": "Poll interval (seconds)" }
+      }
+    }
+  }
+}

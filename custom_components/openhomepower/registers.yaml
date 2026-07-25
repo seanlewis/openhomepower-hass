@@ -1,0 +1,400 @@
+# Energizer Homepower register map
+#
+# Companion to PROTOCOL.md. This file is the machine-readable half of the
+# specification and is deliberately language-neutral: any client, in any
+# language, should be able to consume it directly.
+#
+# Index = linear register number (see PROTOCOL.md §4). All registers are u16
+# little-endian; `signed: true` reinterprets as s16 two's complement.
+#
+# confidence:
+#   confirmed  - cross-checked against the vendor portal at a known timestamp,
+#                or against physics across a full charge/discharge day
+#   candidate  - plausible and self-consistent, NOT independently verified.
+#                Clients MUST visually distinguish these from confirmed values.
+#
+# Contributors: if your unit reports different values, please do not silently
+# edit these entries. Add a new model block (see `models:`) so existing,
+# verified hardware keeps working.
+
+spec_version: 1
+updated: "2026-07-25"
+
+models:
+  - id: hp6
+    description: "Energizer Homepower HP6, 12.2 kWh (2 x 6.1 kWh modules)"
+    verified_against:
+      gateway: "weclouds wegw7628 / OpenWrt 19.07"
+      note: "One HP6 unit; serial withheld. Other units may differ — see README."
+    default: true
+
+# --- battery ---------------------------------------------------------------
+fields:
+
+  battery_soc_pct:
+    register: 5
+    scale: 1
+    unit: "%"
+    signed: false
+    confidence: confirmed
+    label: State of charge
+    device_class: battery
+    state_class: measurement
+    notes: Traced 3% -> 99% -> 46% across a full day; matched portal exactly at 46%.
+
+  battery_voltage_v:
+    register: 4
+    scale: 0.1
+    unit: V
+    signed: false
+    confidence: confirmed
+    label: Pack voltage
+    device_class: voltage
+    state_class: measurement
+    notes: 50.3 V near-empty to 54.2 V full; tracks SOC.
+
+  battery_charge_w:
+    register: 17
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Charge power
+    device_class: power
+    state_class: measurement
+    notes: >-
+      AC side. This is the figure the vendor portal shows as "Charging Power"
+      (matched 717 W exactly). Mutually exclusive with battery_discharge_w.
+
+  battery_discharge_w:
+    register: 16
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Discharge power
+    device_class: power
+    state_class: measurement
+    notes: AC side; portal "Discharging Power" (matched 3520 W exactly).
+
+  battery_charge_dc_w:
+    register: 10
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Charge power (DC)
+    device_class: power
+    state_class: measurement
+    notes: DC into cells; approx 0.972 x battery_charge_w (inverter loss).
+
+  battery_discharge_dc_w:
+    register: 11
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Discharge power (DC)
+    device_class: power
+    state_class: measurement
+    notes: DC out of cells; approx 1.028 x battery_discharge_w. R^2 = 0.99993.
+
+  battery_current_mod1_a:
+    register: 106
+    scale: 0.1
+    unit: A
+    signed: true
+    confidence: candidate
+    label: Module 1 current
+    device_class: current
+    state_class: measurement
+    notes: Positive = charging. Sum of both modules approximates pack current.
+
+  battery_current_mod2_a:
+    register: 107
+    scale: 0.1
+    unit: A
+    signed: true
+    confidence: candidate
+    label: Module 2 current
+    device_class: current
+    state_class: measurement
+
+  battery_soh_pct:
+    register: 88
+    scale: 1
+    unit: "%"
+    signed: false
+    confidence: candidate
+    label: Battery health
+    state_class: measurement
+    notes: Reads 100; duplicated at 89. Held steady while the setpoint changed.
+
+# --- flows -----------------------------------------------------------------
+
+  solar_pv_w:
+    register: 7
+    scale: 1
+    unit: W
+    signed: true
+    confidence: confirmed
+    label: Solar PV power
+    device_class: power
+    state_class: measurement
+    notes: >-
+      Positive when generating (observed to 8550 W on a 9.2 kW array); small
+      negative at night is the PV inverter's standby draw, which indicates a
+      real CT clamp rather than an inferred value.
+
+  grid_import_w:
+    register: 27
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Grid import
+    device_class: power
+    state_class: measurement
+    notes: Import only; reads 0 while exporting. See grid_export_w.
+
+  grid_export_w:
+    register: 26
+    scale: 1
+    unit: W
+    signed: false
+    confidence: confirmed
+    label: Grid export
+    device_class: power
+    state_class: measurement
+    notes: >-
+      Export only; 0 while importing. Mutually exclusive with grid_import_w —
+      across 240 samples neither was ever non-zero at the same time — and the
+      household energy balance closes with no negative loads once export is
+      subtracted.
+
+  backup_load_w:
+    register: 24
+    scale: 1
+    unit: W
+    signed: false
+    confidence: candidate
+    label: Backup circuits
+    device_class: power
+    state_class: measurement
+    notes: Matches the portal's secondary "Using" figure. Duplicated at 25.
+
+# --- daily energy (reset at device-local midnight) -------------------------
+
+  daily_solar_kwh:
+    register: 28
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Solar generated today
+    device_class: energy
+    state_class: total_increasing
+    notes: R^2 = 0.9999 vs integrated solar power, at 10.06 Wh per count.
+
+  daily_charge_kwh:
+    register: 32
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Battery charged today
+    device_class: energy
+    state_class: total_increasing
+    notes: >-
+      AC side. Independently validated: a 24 min forced grid-charge at ~1057 W
+      (0.423 kWh) moved this counter by exactly 0.42 kWh.
+
+  daily_discharge_kwh:
+    register: 31
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Battery discharged today
+    device_class: energy
+    state_class: total_increasing
+
+  daily_charge_dc_kwh:
+    register: 33
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Battery charged today (DC)
+    device_class: energy
+    state_class: total_increasing
+
+  daily_discharge_dc_kwh:
+    register: 34
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Battery discharged today (DC)
+    device_class: energy
+    state_class: total_increasing
+
+  daily_grid_import_kwh:
+    register: 37
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Grid imported today
+    device_class: energy
+    state_class: total_increasing
+    notes: >-
+      Confirmed arithmetically: 124 s after the midnight reset, importing at
+      2373 W, the counter read 0.08 kWh (2373 x 124/3600 = 81.7 Wh). That pins
+      both the x0.01 kWh scale and the daily reset. Also fits integrated import
+      at R^2 0.9992 (~9.9 Wh/count) and passes a freeze test (99/100 intervals
+      while importing).
+      Beware when confirming counters: anything rising with time correlates with
+      cumulative flow — the device clock at in[77] fits at R^2 0.996 and is not
+      a counter at all. The freeze test is what separates them.
+
+  daily_grid_export_kwh:
+    register: 36
+    scale: 0.01
+    unit: kWh
+    signed: false
+    confidence: confirmed
+    label: Grid exported today
+    device_class: energy
+    state_class: total_increasing
+    notes: >-
+      Originally mislabelled "solar to battery" on an endpoint-only match. It is
+      grid EXPORT: fits integrated export at R^2 0.9992 with 9.6 Wh per count,
+      and advances in 37 of 39 intervals while exporting versus 11 of 172 while
+      idle.
+
+# --- grid & system ---------------------------------------------------------
+
+  ac_voltage_v:
+    register: 12
+    scale: 0.1
+    unit: V
+    signed: false
+    confidence: confirmed
+    label: AC voltage
+    device_class: voltage
+    state_class: measurement
+    notes: Duplicated at register 20.
+
+  grid_frequency_hz:
+    register: 15
+    scale: 0.01
+    unit: Hz
+    signed: false
+    confidence: confirmed
+    label: Grid frequency
+    device_class: frequency
+    state_class: measurement
+    notes: Duplicated at register 23.
+
+  charge_power_setpoint_pct:
+    register: 89
+    scale: 1
+    unit: "%"
+    signed: false
+    confidence: confirmed
+    label: Charge power setpoint
+    state_class: measurement
+    notes: >-
+      Mirrors the scheduler's "Charging Power %". Charge power is linear in this
+      value at approximately 44 W per percent (max approx 4.4 kW).
+
+  operating_mode:
+    register: 0
+    scale: 1
+    unit: null
+    signed: false
+    confidence: confirmed
+    label: Operating mode
+    enum:
+      0: Automatic
+      32: Grid charge
+    notes: >-
+      Observed 0 in normal/idle operation and 32 while a forced grid-charge
+      schedule was active. Codes for forced discharge and PV charge are unknown.
+
+  temp_1_c:
+    register: 141
+    scale: 1
+    unit: "°C"
+    signed: true
+    confidence: candidate
+    label: Temperature 1
+    device_class: temperature
+    state_class: measurement
+
+  temp_2_c:
+    register: 142
+    scale: 1
+    unit: "°C"
+    signed: true
+    confidence: candidate
+    label: Temperature 2
+    device_class: temperature
+    state_class: measurement
+
+# --- composite / special encodings (see PROTOCOL.md section 5) -------------
+
+composites:
+  device_time:
+    kind: clock
+    registers: [76, 77, 78]
+    confidence: confirmed
+    label: Device clock
+    notes: Byte pairs year/month, day/hour, minute/second. Device-local time.
+
+  device_serial:
+    kind: ascii
+    registers: [120, 121, 122, 123, 124]
+    confidence: confirmed
+    label: Device serial
+
+# --- derived (computed by the client, not registers) -----------------------
+
+derived:
+  battery_power_w:
+    formula: battery_discharge_w - battery_charge_w
+    unit: W
+    label: Battery power
+    device_class: power
+    state_class: measurement
+    notes: Positive = discharging, negative = charging.
+
+  battery_current_a:
+    formula: battery_current_mod1_a + battery_current_mod2_a
+    unit: A
+    label: Battery current
+    device_class: current
+    state_class: measurement
+
+  grid_power_w:
+    formula: grid_import_w - grid_export_w
+    unit: W
+    label: Grid power
+    device_class: power
+    state_class: measurement
+    notes: >-
+      Signed: positive = importing, negative = exporting. Safe to combine
+      because the two registers are mutually exclusive. This is the sensor to
+      use for Home Assistant's "Standard" grid power measurement.
+
+  house_load_w:
+    formula: solar_pv_w + battery_discharge_w + grid_import_w - battery_charge_w - grid_export_w
+    unit: W
+    label: House load
+    device_class: power
+    state_class: measurement
+    notes: >-
+      Export must be subtracted — energy leaving the property was never consumed
+      by the house. Reproduces the vendor portal's own household figure to
+      within a watt.
