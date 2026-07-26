@@ -41,8 +41,21 @@ def _read_command(n: int) -> str:
 # the daemon interleaves its clock-only poll.
 DEFAULT_FETCH = 12
 
-CONNECT_TIMEOUT = 20
-COMMAND_TIMEOUT = 30
+# Timeouts are chosen so a completely failing poll cycle still finishes inside
+# the 60 s update interval: 2 attempts x 15 s + one 3 s backoff = ~33 s worst
+# case. (Previously 3 x 30 s + 6 s = 96 s, which overran the interval.)
+CONNECT_TIMEOUT = 15
+COMMAND_TIMEOUT = 15
+RETRY_BACKOFF = 3
+DEFAULT_ATTEMPTS = 2
+
+# The gateway periodically re-associates to its AP, which drops the link without
+# either end sending a FIN. Without keepalives the dead session sits half-open —
+# we have observed exactly that, an orphaned ESTABLISHED session lingering on the
+# device. asyncssh keepalives detect it in ~45 s and tear it down, so the next
+# poll redials a clean connection instead of blocking on a corpse.
+KEEPALIVE_INTERVAL = 15
+KEEPALIVE_COUNT_MAX = 3
 
 
 class TransportError(RuntimeError):
@@ -88,6 +101,8 @@ class Gateway:
                     # added.
                     known_hosts=None,
                     client_keys=None,
+                    keepalive_interval=KEEPALIVE_INTERVAL,
+                    keepalive_count_max=KEEPALIVE_COUNT_MAX,
                 ),
                 CONNECT_TIMEOUT,
             )
@@ -138,17 +153,21 @@ class Gateway:
                                  "(is the vendor daemon running?)")
         return [newest[k] for k in sorted(newest)]
 
-    async def read_latest(self, attempts: int = 3) -> list[Frame]:
-        """read_frames with retries, for the device's flaky WiFi."""
+    async def read_latest(self, attempts: int = DEFAULT_ATTEMPTS) -> list[Frame]:
+        """read_frames with retries, for the device's flaky WiFi.
+
+        The first failure usually means the session died with the WiFi link;
+        _run() has already dropped it, so the retry redials.
+        """
         last: Exception | None = None
         for attempt in range(attempts):
             try:
                 return await self.read_frames()
             except TransportError as exc:
                 last = exc
-                log.debug("read attempt %d failed: %s", attempt + 1, exc)
+                log.debug("read attempt %d/%d failed: %s", attempt + 1, attempts, exc)
                 if attempt < attempts - 1:
-                    await asyncio.sleep(2 + attempt * 2)
+                    await asyncio.sleep(RETRY_BACKOFF)
         raise TransportError(f"all {attempts} read attempts failed: {last}")
 
 

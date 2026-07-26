@@ -87,6 +87,9 @@ class HomepowerSensor(CoordinatorEntity[HomepowerCoordinator], SensorEntity):
         return {
             "confidence": self._spec.confidence,
             "register": reading.register if reading else None,
+            # Non-null and growing means we are serving the last good reading
+            # through a WiFi drop rather than a fresh one.
+            "reading_age_seconds": self.coordinator.reading_age,
         }
 
     @property
