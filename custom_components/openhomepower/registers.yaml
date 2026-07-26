@@ -329,9 +329,16 @@ fields:
     unit: "°C"
     signed: true
     confidence: candidate
-    label: Temperature 1
+    label: Battery Temperature
     device_class: temperature
     state_class: measurement
+    notes: >-
+      Driven by battery throughput, not sunlight. Correlation with instantaneous
+      power is weak (+0.15) but rises monotonically as power is time-averaged —
+      +0.56 over 15 samples, +0.82 over 30 — which is the signature of thermal
+      lag. Correlation with solar is ~0. This one lags further and runs cooler
+      (18-25 C observed) than temp_2_c, so it is read as the pack/cabinet rather
+      than the heat source. Absolute calibration is unverified.
 
   temp_2_c:
     register: 142
@@ -339,9 +346,14 @@ fields:
     unit: "°C"
     signed: true
     confidence: candidate
-    label: Temperature 2
+    label: Inverter Temperature
     device_class: temperature
     state_class: measurement
+    notes: >-
+      Same thermal-lag behaviour but responds faster (+0.61 instantaneous,
+      +0.83 smoothed) and runs hotter (19-30 C), so it is read as being nearer
+      the heat source — inverter or heatsink. Absolute calibration is
+      unverified; the naming is inference from response speed, not a datasheet.
 
 # --- composite / special encodings (see PROTOCOL.md section 5) -------------
 
