@@ -8,15 +8,21 @@
 > or Enertek Holdings. Unofficial software, provided as-is.
 > **It never writes to your battery.**
 
-Enertek abandoned the Homepower — the iOS app was pulled from the App Store, the
-product is discontinued, and the web portal's daily energy summary now reports
-0 kWh for everything. This integration talks to the battery **directly on your
-own network**, with no vendor cloud involved, and gives you back:
+Enertek has effectively abandoned the Homepower: the iOS app was pulled from the
+App Store, the product is discontinued, and the Clean Energy Council moved to
+suspend its listings. Owners also report the vendor's cloud being **unreliable
+and offline for extended periods — reportedly weeks at a time** — during which
+they could neither see their data nor change any battery settings.
+
+This integration talks to the battery **directly on your own network**, with no
+vendor cloud in the path at all, and gives you back:
 
 - State of charge, pack voltage, battery power
 - Solar generation, grid import/export, household load
-- **Daily energy counters that feed the Energy Dashboard** — including data the
-  vendor portal can no longer show you
+- **Daily energy counters that feed the Energy Dashboard**
+
+Because nothing here depends on Enertek's servers, it keeps working when their
+cloud does not.
 
 ## Install
 
