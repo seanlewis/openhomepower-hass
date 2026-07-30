@@ -65,7 +65,7 @@
       "fields": {
         "schedule": {
           "name": "Schedule",
-          "description": "day (mon..sun) -> category (grid_charge, pv_charge, discharge) -> up to two windows of {start, end, power}."
+          "description": "Per day (mon-sun) and category (grid_charge, pv_charge, discharge): up to two windows, each with a start, end and power (0-100)."
         }
       }
     }

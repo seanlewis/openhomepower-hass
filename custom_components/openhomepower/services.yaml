@@ -8,8 +8,9 @@ set_schedule:
     schedule:
       name: Schedule
       description: >-
-        Canonical schedule: day (mon..sun) -> category (grid_charge, pv_charge,
-        discharge) -> up to two windows of {start "HH:MM", end "HH:MM", power 0-100}.
+        Canonical schedule. Per day (mon-sun) and category (grid_charge, pv_charge,
+        discharge): up to two windows, each with a start (HH:MM), end (HH:MM) and
+        power (0-100).
       required: true
       example: >-
         {"mon": {"grid_charge": [{"start": "02:00", "end": "05:00", "power": 100}],
