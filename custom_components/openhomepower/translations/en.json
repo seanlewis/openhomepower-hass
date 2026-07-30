@@ -27,8 +27,46 @@
     "step": {
       "init": {
         "title": "OpenHomepower options",
-        "description": "The battery only refreshes its data every 15-20 seconds at best, and minutes apart when idle, so polling faster gains nothing.",
-        "data": { "poll_seconds": "Poll interval (seconds)" }
+        "description": "Monitoring polls no faster than the battery refreshes (15-20s at best).\n\nControl is optional and off by default. Turning it on lets Home Assistant WRITE settings to the battery via the broker below — the vendor broker to start with; point it at your own local broker later and nothing else changes. The topic serial is filled in automatically where possible.",
+        "data": {
+          "poll_seconds": "Poll interval (seconds)",
+          "control_enabled": "Enable control (writes to the battery)",
+          "broker_host": "Control broker host",
+          "broker_port": "Control broker port",
+          "broker_user": "Control broker username",
+          "broker_password": "Control broker password",
+          "topic_serial": "MQTT topic serial"
+        }
+      }
+    }
+  },
+  "entity": {
+    "select": {
+      "application_mode": {
+        "name": "Application mode",
+        "state": {
+          "auto": "Automatic",
+          "semi": "Semi-automatic",
+          "manual": "Manual"
+        }
+      }
+    },
+    "number": {
+      "max_soc": { "name": "Maximum state of charge" },
+      "reserve_on_grid": { "name": "Reserve limit (on-grid)" },
+      "reserve_off_grid": { "name": "Reserve limit (off-grid)" },
+      "excess_gen": { "name": "Excess generation to charge" }
+    }
+  },
+  "services": {
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Write a full weekly charge/discharge schedule (Manual mode). Complete overwrite — anything not listed is cleared.",
+      "fields": {
+        "schedule": {
+          "name": "Schedule",
+          "description": "day (mon..sun) -> category (grid_charge, pv_charge, discharge) -> up to two windows of {start, end, power}."
+        }
       }
     }
   }

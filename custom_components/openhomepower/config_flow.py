@@ -17,7 +17,14 @@ from homeassistant.core import callback
 
 from . import discovery
 from .const import (
+    CONF_BROKER_HOST,
+    CONF_BROKER_PASSWORD,
+    CONF_BROKER_PORT,
+    CONF_BROKER_USER,
+    CONF_CONTROL_ENABLED,
     CONF_POLL_SECONDS,
+    CONF_TOPIC_SERIAL,
+    DEFAULT_BROKER_PORT,
     DEFAULT_POLL_SECONDS,
     DOMAIN,
     MIN_POLL_SECONDS,
@@ -132,7 +139,12 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class OpenHomepowerOptionsFlow(OptionsFlow):
-    """Allow the poll interval to be changed after setup."""
+    """Poll interval, plus opt-in control settings.
+
+    Control is off by default. Turning it on lets HA write settings via a
+    configurable broker — the vendor broker to start, a local broker after
+    cutover (change the host here; nothing else moves).
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -140,14 +152,69 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        current = self.config_entry.options.get(
-            CONF_POLL_SECONDS,
-            self.config_entry.data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS),
-        )
+        opts = self.config_entry.options
+        data = self.config_entry.data
+        poll = opts.get(CONF_POLL_SECONDS,
+                        data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS))
+        # Derive broker host/creds/serial from the device (best-effort) for the
+        # form defaults — nothing sensitive is stored in this source.
+        d = await self._derive_broker()
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
-                vol.Optional(CONF_POLL_SECONDS, default=current):
+                vol.Optional(CONF_POLL_SECONDS, default=poll):
                     vol.All(int, vol.Range(min=MIN_POLL_SECONDS, max=3600)),
+                vol.Optional(CONF_CONTROL_ENABLED,
+                             default=opts.get(CONF_CONTROL_ENABLED, False)): bool,
+                vol.Optional(CONF_BROKER_HOST,
+                             default=opts.get(CONF_BROKER_HOST, d.get("host", ""))): str,
+                vol.Optional(CONF_BROKER_PORT,
+                             default=opts.get(CONF_BROKER_PORT, d.get("port", DEFAULT_BROKER_PORT))): int,
+                vol.Optional(CONF_BROKER_USER,
+                             default=opts.get(CONF_BROKER_USER, d.get("user", ""))): str,
+                vol.Optional(CONF_BROKER_PASSWORD,
+                             default=opts.get(CONF_BROKER_PASSWORD, d.get("pwd", ""))): str,
+                vol.Optional(CONF_TOPIC_SERIAL,
+                             default=opts.get(CONF_TOPIC_SERIAL, d.get("serial", ""))): str,
             }),
         )
+
+    async def _derive_broker(self) -> dict:
+        """Read broker host/port/creds + topic serial off the gateway via SSH.
+
+        Best-effort and never fatal. Keeps vendor secrets out of this source —
+        they come from the device the user already owns.
+        """
+        import re
+
+        import asyncssh
+
+        data = self.config_entry.data
+        out: dict = {}
+        try:
+            async with asyncssh.connect(
+                data[CONF_HOST], port=data.get(CONF_PORT, DEFAULT_PORT),
+                username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
+                password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                known_hosts=None,
+            ) as conn:
+                result = await conn.run(
+                    "uci show we2; echo ---; "
+                    "grep -oE 'Enertek/[0-9]+/' /tmp/wemonitor.log 2>/dev/null | head -1",
+                    timeout=10,
+                )
+                text = result.stdout or ""
+                for key, field in (("host", "host"), ("port", "port"),
+                                   ("user", "user"), ("pwd", "pwd")):
+                    m = re.search(rf"we2\.mqtt\.{field}='([^']*)'", text)
+                    if m:
+                        out[key] = m.group(1)
+                m = re.search(r"Enertek/([0-9]+)/", text)
+                if m:
+                    out["serial"] = m.group(1)
+                if "port" in out and out["port"].isdigit():
+                    out["port"] = int(out["port"])
+        except Exception:  # noqa: BLE001 - derivation is best-effort, never fatal
+            _LOGGER.debug("could not derive broker settings", exc_info=True)
+        return out

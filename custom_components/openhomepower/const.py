@@ -33,3 +33,24 @@ EXCLUDED_KEYS = {
     "daily_charge_dc_kwh",
     "daily_discharge_dc_kwh",
 }
+
+# --- control (opt-in write path) --------------------------------------------
+# Control publishes to a CONFIGURABLE broker — the vendor broker today, a local
+# broker after cutover. Off by default so the integration stays read-only unless
+# a user deliberately turns it on.
+CONF_CONTROL_ENABLED = "control_enabled"
+CONF_BROKER_HOST = "broker_host"
+CONF_BROKER_PORT = "broker_port"
+CONF_BROKER_USER = "broker_user"
+CONF_BROKER_PASSWORD = "broker_password"
+CONF_TOPIC_SERIAL = "topic_serial"
+
+# Broker settings are NOT hardcoded — they are derived from the device over SSH
+# at config time (host, port, credentials, topic serial), so no vendor secrets
+# live in this (public) source. Only the port default is a plain, non-secret value.
+DEFAULT_BROKER_PORT = 1884
+
+# Config registers barely change, so poll them rarely.
+CONTROL_SCAN_INTERVAL = timedelta(seconds=600)
+
+SERVICE_SET_SCHEDULE = "set_schedule"

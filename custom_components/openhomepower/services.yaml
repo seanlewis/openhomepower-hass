@@ -1,0 +1,18 @@
+set_schedule:
+  name: Set schedule
+  description: >-
+    Write a full weekly charge/discharge schedule to the Homepower (applies in
+    Manual mode). This is a complete overwrite — any day/window not present is
+    cleared. Requires control to be enabled.
+  fields:
+    schedule:
+      name: Schedule
+      description: >-
+        Canonical schedule: day (mon..sun) -> category (grid_charge, pv_charge,
+        discharge) -> up to two windows of {start "HH:MM", end "HH:MM", power 0-100}.
+      required: true
+      example: >-
+        {"mon": {"grid_charge": [{"start": "02:00", "end": "05:00", "power": 100}],
+        "discharge": [{"start": "17:00", "end": "21:00", "power": 100}]}}
+      selector:
+        object:

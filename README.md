@@ -6,7 +6,8 @@
 
 > ⚠️ Not affiliated with, endorsed by, or supported by Energizer, 8 Star Energy
 > or Enertek Holdings. Unofficial software, provided as-is.
-> **It never writes to your battery.**
+> **Read-only by default** — optional control (writing settings) is off unless
+> you deliberately enable it. See [Control](#control-optional).
 
 Enertek has effectively abandoned the Homepower: the iOS app was pulled from the
 App Store, the product is discontinued, and the Clean Energy Council moved to
@@ -68,10 +69,50 @@ The "Homepower" on your network is a **WeClouds MT7628 gateway running OpenWrt**
 that bridges the battery's BMS to WiFi. Its vendor daemon logs every BMS poll to
 a file; this integration reads that log over SSH and decodes the register frames.
 
-It never writes anything, never touches the serial line, and never sends your
-data anywhere. The register map — every field, its scale, and how confident we
-are in it — is in
+The monitoring path never writes anything, never touches the serial line, and
+never sends your data anywhere. The register map — every field, its scale, and
+how confident we are in it — is in
 [`registers.yaml`](custom_components/openhomepower/registers.yaml).
+
+## Control (optional)
+
+By default this integration only **monitors**. If you want Home Assistant to
+*change* battery settings, enable **control** in the integration's options
+(**Settings → Devices & Services → OpenHomepower → Configure → Enable control**).
+Control adds:
+
+- **Application mode** (Automatic / Semi-automatic / Manual) — a `select`
+- **Maximum state of charge**, **Reserve limit (on/off-grid)** and **Excess
+  generation to charge** — `number` sliders
+- **`openhomepower.set_schedule`** — a service that writes a full weekly
+  charge/discharge schedule (Manual mode) from JSON. It is a **complete
+  overwrite** — any day/window you don't list is cleared:
+
+  ```yaml
+  service: openhomepower.set_schedule
+  data:
+    schedule:
+      mon:
+        grid_charge: [{ start: "02:00", end: "05:00", power: 100 }]
+        discharge:   [{ start: "17:00", end: "21:00", power: 100 }]
+      sat:
+        pv_charge:   [{ start: "09:00", end: "15:00", power: 80 }]
+  ```
+
+### The broker, and cutting the cord
+
+Control needs an MQTT broker the battery's daemon listens on. Out of the box the
+options point at the **vendor broker**, so control works immediately — but
+commands travel via Enertek's cloud, so they pause when that cloud is down.
+
+To make control **fully local**, run your own broker, point the broker host in
+these options at it, and repoint the gateway daemon to it (`uci set
+we2.mqtt.host=…`). The broker host is the only switch — nothing else in the
+integration changes, and monitoring stays local regardless.
+
+> ⚠️ Control writes real settings to a lithium battery: the reserve limits set a
+> discharge floor and the schedule governs charge/discharge. Set them
+> deliberately. Firmware-update paths are never touched.
 
 ## Will it work with my battery?
 

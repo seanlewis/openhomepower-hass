@@ -39,7 +39,7 @@ STATE_CLASSES = {
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
                             async_add_entities: AddEntitiesCallback) -> None:
     """Set up the sensors."""
-    coordinator: HomepowerCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: HomepowerCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     specs = build_specs(coordinator.regmap)
     async_add_entities(
         HomepowerSensor(coordinator, entry, spec) for spec in specs
