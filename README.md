@@ -99,8 +99,11 @@ Control adds:
         pv_charge:   [{ start: "09:00", end: "15:00", power: 80 }]
   ```
 
-Ready-to-paste schedules (time-of-use, self-consumption, weekday/weekend, clear)
-are in [`examples/schedules.md`](examples/schedules.md).
+Ready-to-paste **schedules** are in
+[`examples/schedules.md`](examples/schedules.md). And where control really
+shines — **automations** (pre-charge before low-solar days from the weather
+forecast, grab a free/cheap power window, raise the reserve before a storm) — are
+in [`examples/automations.md`](examples/automations.md).
 
 ### The broker, and cutting the cord
 
