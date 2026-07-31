@@ -114,7 +114,8 @@ commands travel via Enertek's cloud, so they pause when that cloud is down.
 To make control **fully local**, run your own broker, point the broker host in
 these options at it, and repoint the gateway daemon to it (`uci set
 we2.mqtt.host=…`). The broker host is the only switch — nothing else in the
-integration changes, and monitoring stays local regardless.
+integration changes, and monitoring stays local regardless. This does require 
+adjusting the firmware on your battery to repoint to your local broker. 
 
 > ⚠️ Control writes real settings to a lithium battery: the reserve limits set a
 > discharge floor and the schedule governs charge/discharge. Set them
