@@ -36,6 +36,17 @@ def _read_command(n: int) -> str:
     """The only command this library ever runs. Read-only by construction."""
     return f"grep -aoE '{RESPONSE_PATTERN}' {LOG_PATH} | tail -{int(n)}"
 
+
+# Holding-register (function 03) RESPONSE frames — the writable *config* space
+# (mode, reserve, max-SoC, excess). Same frame shape as the telemetry fn-04
+# frames, same ASCII-digit device serial. The control layer reads config from
+# these so its state rides the resilient local SSH path, not the vendor broker.
+HOLDING_PATTERN = r"0103(3[0-9]){10}[0-9a-f]+"
+
+
+def _read_holding_command(n: int) -> str:
+    return f"grep -aoE '{HOLDING_PATTERN}' {LOG_PATH} | tail -{int(n)}"
+
 # One full telemetry cycle is three responses (starts 0, 127, 254). Fetch
 # comfortably more than that so a complete bank is always available even when
 # the daemon interleaves its clock-only poll.
@@ -169,6 +180,27 @@ class Gateway:
                 if attempt < attempts - 1:
                     await asyncio.sleep(RETRY_BACKOFF)
         raise TransportError(f"all {attempts} read attempts failed: {last}")
+
+    async def read_holding(self, count: int = 300,
+                           attempts: int = DEFAULT_ATTEMPTS) -> list[str]:
+        """Fetch recent holding-register (config) response frames as hex tokens.
+
+        The daemon reads the full holding bank only occasionally (the whole-bank
+        block reads that carry most registers), while polling a couple of
+        registers — notably mode (231) — very frequently. So the window must be
+        generous enough that a recent whole-bank read is always included, not
+        just a run of single-register polls. Retries for the flaky WiFi.
+        """
+        last: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                out = await self._run(_read_holding_command(count))
+                return [ln.strip() for ln in out.splitlines() if ln.strip()]
+            except TransportError as exc:
+                last = exc
+                if attempt < attempts - 1:
+                    await asyncio.sleep(RETRY_BACKOFF)
+        raise TransportError(f"all {attempts} holding reads failed: {last}")
 
 
 async def probe(creds: Credentials) -> bool:

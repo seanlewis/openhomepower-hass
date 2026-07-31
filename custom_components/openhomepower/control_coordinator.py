@@ -1,6 +1,9 @@
-"""Reads the writable configuration registers via MQTT so the control entities
-can show the battery's current settings. Config changes rarely, so this polls
-slowly (see CONTROL_SCAN_INTERVAL)."""
+"""Coordinator for the control entities.
+
+Reads the writable config (mode / max-SoC / reserve / excess) from the same
+LOCAL SSH log the sensors use — so control *state* stays visible even when the
+vendor broker is down. Only *writes* go over MQTT (`self.mqtt`). Config changes
+rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
 from __future__ import annotations
 
 import logging
@@ -13,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from . import control
 from .const import CONTROL_SCAN_INTERVAL, DOMAIN, MANUFACTURER, MODEL
 from .control import MqttControl
+from .transport import Gateway, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,28 +32,27 @@ def control_device_info(entry: ConfigEntry) -> DeviceInfo:
 
 
 class ControlCoordinator(DataUpdateCoordinator[dict]):
-    """Polls mode / max-SoC / reserve / excess over the control MQTT path."""
+    """Reads config over SSH (local, resilient); writes go via MQTT."""
 
-    def __init__(self, hass: HomeAssistant, mqtt: MqttControl) -> None:
+    def __init__(self, hass: HomeAssistant, gateway: Gateway, mqtt: MqttControl) -> None:
         super().__init__(
             hass, _LOGGER, name="OpenHomepower control",
             update_interval=CONTROL_SCAN_INTERVAL,
         )
+        self.gateway = gateway
         self.mqtt = mqtt
 
     async def _async_update_data(self) -> dict:
-        def _read() -> dict:
-            mode = self.mqtt.read(control.REG_MODE, 1)[0]
-            block = self.mqtt.read(control.REG_RESERVE_BLOCK, 4)   # [100, off, 2, excess]
-            return {
-                "mode": control.MODES_INV.get(mode, "auto"),
-                "max_soc": self.mqtt.read(control.REG_MAX_SOC, 1)[0],
-                "reserve_on": self.mqtt.read(control.REG_RESERVE_ON, 1)[0],
-                "reserve_off": block[1],
-                "excess": block[3],
-            }
-
         try:
-            return await self.hass.async_add_executor_job(_read)
-        except Exception as err:  # noqa: BLE001 - report as a coordinator failure
+            tokens = await self.gateway.read_holding()
+        except TransportError as err:
             raise UpdateFailed(f"control read failed: {err}") from err
+        regs = control.parse_holding_frames(tokens)
+        # Keep the last-known value for any register not in this batch — config
+        # only changes when someone writes it, so a stale-but-unchanged value is
+        # still the correct value.
+        state = dict(self.data or {})
+        for key, value in control.control_state_from_regs(regs).items():
+            if value is not None:
+                state[key] = value
+        return state

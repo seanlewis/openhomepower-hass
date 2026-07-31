@@ -74,7 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     broker = _broker_config(entry)
     if broker is not None:
         mqtt = MqttControl(broker)
-        control_coordinator = ControlCoordinator(hass, mqtt)
+        # Reads ride the shared SSH gateway (local, resilient); only writes use MQTT.
+        control_coordinator = ControlCoordinator(hass, coordinator.gateway, mqtt)
         # Best-effort: a control-read hiccup must not block the (read-only) setup.
         await control_coordinator.async_refresh()
         store["control"] = control_coordinator

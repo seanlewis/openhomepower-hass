@@ -4,6 +4,7 @@ Imports control.py in isolation so these run without Home Assistant.
 """
 import importlib.util
 import pathlib
+import struct
 import sys
 
 _PATH = (pathlib.Path(__file__).resolve().parents[1]
@@ -66,3 +67,28 @@ def test_allowlist_rejects_unknown_register():
     import pytest
     with pytest.raises(ValueError):
         control.frame06(200, 1)          # not an allowed single-write register
+
+
+def _fn03(start, values):
+    # synthetic device serial — the parser ignores devsn content, so this keeps
+    # a real serial out of the source (same reason the fixtures are scrubbed).
+    body = (b"\x01\x03" + b"0000000000" + struct.pack("<H", start)
+            + bytes([len(values) * 2]) + b"".join(struct.pack("<H", v) for v in values))
+    return (body + struct.pack("<H", control.crc16(body))).hex()
+
+
+def test_parse_holding_single_register():
+    assert control.parse_holding_frames([_fn03(231, [1])]).get(231) == 1
+
+
+def test_parse_holding_multi_and_state():
+    regs = control.parse_holding_frames([_fn03(67, [90]), _fn03(120, [100, 8, 2, 40])])
+    assert regs[67] == 90 and regs[121] == 8 and regs[123] == 40
+    state = control.control_state_from_regs({**regs, 231: 2, 105: 5})
+    assert state == {"mode": "semi", "max_soc": 90, "reserve_on": 5,
+                     "reserve_off": 8, "excess": 40}
+
+
+def test_parse_holding_rejects_bad_crc():
+    bad = _fn03(231, [1])[:-4] + "0000"          # corrupt the CRC
+    assert control.parse_holding_frames([bad]) == {}
