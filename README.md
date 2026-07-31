@@ -99,6 +99,9 @@ Control adds:
         pv_charge:   [{ start: "09:00", end: "15:00", power: 80 }]
   ```
 
+Ready-to-paste schedules (time-of-use, self-consumption, weekday/weekend, clear)
+are in [`examples/schedules.md`](examples/schedules.md).
+
 ### The broker, and cutting the cord
 
 Control needs an MQTT broker the battery's daemon listens on. Out of the box the
