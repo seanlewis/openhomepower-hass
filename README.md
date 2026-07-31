@@ -25,6 +25,10 @@ vendor cloud in the path at all, and gives you back:
 Because nothing here depends on Enertek's servers, it keeps working when their
 cloud does not.
 
+Beyond monitoring, it can optionally **control** the battery too — application
+mode, reserve limits, and a full weekly charge/discharge schedule. Control is
+**off by default** and enabled deliberately; see [Control](#control-optional).
+
 ## Install
 
 ### HACS (recommended)
@@ -111,11 +115,15 @@ Control needs an MQTT broker the battery's daemon listens on. Out of the box the
 options point at the **vendor broker**, so control works immediately — but
 commands travel via Enertek's cloud, so they pause when that cloud is down.
 
-To make control **fully local**, run your own broker, point the broker host in
-these options at it, and repoint the gateway daemon to it (`uci set
-we2.mqtt.host=…`). The broker host is the only switch — nothing else in the
-integration changes, and monitoring stays local regardless. This does require 
-adjusting the firmware on your battery to repoint to your local broker. 
+To make control **fully local**, run your own broker — the companion
+[**OpenHomepower MQTT Broker**](https://github.com/seanlewis/openhomepower-broker)
+is a ready-made, secure one (per-device credentials, isolated topics; installs as
+a Home Assistant add-on, Docker, or native). Point the broker host in these
+options at it, and repoint the gateway daemon to it. The broker host is the only
+switch here — nothing else in the integration changes, and monitoring stays local
+regardless. Repointing the gateway is a **config change** (one `uci set
+we2.mqtt.host=…`), not a firmware flash; the broker repo has the exact commands
+and a one-line rollback.
 
 > ⚠️ Control writes real settings to a lithium battery: the reserve limits set a
 > discharge floor and the schedule governs charge/discharge. Set them
