@@ -12,6 +12,34 @@ just building blocks; these examples show what you can do with them.
 > find them in **Developer Tools → States**. The examples are independent ideas;
 > don't run all three unmodified (they'd fight over the mode).
 
+## How reversion works — and not getting stuck
+
+The battery **holds whatever mode/schedule was last written** — there is no
+auto-revert and no default fallback. So *reversion is the automation's job*. Two
+habits keep you out of trouble:
+
+1. **Keep a daily "reconciler"** that always sets the correct state for the day.
+   Example 1 is one — it runs every evening and picks Auto or Manual. Even if a
+   short-lived override never reverts (HA restarted, a trigger missed), the next
+   daily run puts things right. A minimal version if you don't use the forecast one:
+
+   ```yaml
+   alias: Battery – daily reset to Automatic
+   triggers:
+     - trigger: time
+       at: "07:00:00"
+   actions:
+     - action: select.select_option
+       target:
+         entity_id: select.energizer_homepower_application_mode
+       data:
+         option: auto
+   ```
+
+2. **Make any temporary Manual schedule self-sufficient** — always include a
+   `discharge` window, so if a revert is missed the battery still covers your
+   load instead of sitting idle. (Examples 1 and 2 do this.)
+
 ---
 
 ## 1. Pre-charge before a low-solar day
@@ -113,6 +141,7 @@ actions:
               schedule:
                 mon: &charge
                   grid_charge: [{ start: "05:00", end: "06:00", power: 100 }]
+                  discharge:   [{ start: "06:00", end: "22:00", power: 100 }]  # so a missed revert isn't harmful
                 tue: *charge
                 wed: *charge
                 thu: *charge
