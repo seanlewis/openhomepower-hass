@@ -31,26 +31,88 @@ mode, reserve limits, and a full weekly charge/discharge schedule. Control is
 
 ## Install
 
-### HACS (recommended)
+New to Home Assistant or HACS? Follow this section top to bottom. Already have
+HACS? Skip to [step 2](#2-add-this-integration-to-hacs).
 
-1. HACS → ⋮ → **Custom repositories**
-2. Add this repository, category **Integration**
-3. Install **OpenHomepower**, restart Home Assistant
-4. **Settings → Devices & Services → Add Integration → OpenHomepower**
+**Requirements**
 
-### Manual
+- Home Assistant **2024.6 or newer** — any install type (HA OS, Supervised,
+  Container, or Core).
+- A free **GitHub account** — HACS uses it to download community integrations.
 
-Copy `custom_components/openhomepower` into your `config/custom_components/`
-directory and restart Home Assistant.
+### 1. Install HACS (skip if the sidebar already shows "HACS")
 
-## Setup
+HACS — the **H**ome **A**ssistant **C**ommunity **S**tore — is the tool that
+installs community integrations like this one. It isn't built into Home
+Assistant, so you add it once, and it then manages updates for everything you
+install through it.
 
-The integration tries to find your battery automatically — it advertises the
-DHCP hostname `Homepower`, and its web page carries an identifiable title. If
-autodiscovery finds it, the address is pre-filled; otherwise enter the IP.
+<details>
+<summary><b>Step-by-step HACS install</b></summary>
 
-The username and password defaults are the **manufacturer's own published
-values** (from Enertek's Wi-Fi setup guide) and work on unmodified units.
+These are the standard steps for **HA OS / Supervised** (the most common setup).
+The full official guide is at <https://hacs.xyz/docs/setup/download>.
+
+1. Install a terminal add-on so you can run one command: **Settings → Add-ons →
+   Add-on Store**, search **Advanced SSH & Web Terminal**, **Install**, then
+   **Start**. (Any terminal add-on works — "Terminal & SSH" or "Studio Code
+   Server" are fine too.)
+2. Open the terminal (the **Open Web UI** button on the add-on page) and run:
+
+   ```bash
+   wget -O - https://get.hacs.xyz | bash -
+   ```
+
+3. Restart Home Assistant: **Settings → System → ⋮ (top-right) → Restart Home
+   Assistant**.
+4. Add the HACS integration: **Settings → Devices & Services → + Add
+   Integration**, search **HACS**, and select it.
+5. Tick the acknowledgements, then **authorize with GitHub** — HACS shows a
+   short code; open <https://github.com/login/device>, enter the code, and
+   approve.
+6. **HACS** now appears in your sidebar. That's a one-time setup.
+
+> **Container or Core install?** You don't have add-ons — open a shell into your
+> Home Assistant container (or your `config` folder) and run the same
+> `wget … | bash -` command, then restart.
+
+</details>
+
+### 2. Add this integration to HACS
+
+OpenHomepower isn't in the default HACS store yet, so you add it as a **custom
+repository** (a one-time step):
+
+1. Open **HACS** from the sidebar.
+2. Top-right **⋮ → Custom repositories**.
+3. In **Repository**, paste:
+   `https://github.com/seanlewis/openhomepower-hass`
+4. Set the category to **Integration**, click **Add**, then close the dialog.
+5. Search HACS for **OpenHomepower**, open it, and click **Download** (take the
+   latest version offered).
+6. Restart Home Assistant: **Settings → System → ⋮ → Restart Home Assistant**.
+
+### 3. Set up the integration
+
+1. **Settings → Devices & Services → + Add Integration**, then search
+   **OpenHomepower**.
+2. It tries to find your battery automatically — it looks for the DHCP hostname
+   `Homepower`. If found, the address is pre-filled; otherwise enter the
+   battery's IP address.
+3. The username and password are pre-filled with the **manufacturer's own
+   published defaults** (from Enertek's Wi-Fi setup guide) and work on
+   unmodified units — just continue.
+4. Finish. Your battery's sensors appear within a few seconds.
+
+<details>
+<summary><b>Prefer not to use HACS? Manual install</b></summary>
+
+Copy the `custom_components/openhomepower` folder from this repository into your
+Home Assistant `config/custom_components/` directory, restart Home Assistant,
+then do **step 3** above. The trade-off: HACS won't notify you of updates, so
+you'd repeat this by hand for each new version.
+
+</details>
 
 ## Energy Dashboard
 
