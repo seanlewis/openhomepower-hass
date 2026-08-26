@@ -42,41 +42,35 @@ HACS? Skip to [step 2](#2-add-this-integration-to-hacs).
 
 ### 1. Install HACS (skip if the sidebar already shows "HACS")
 
-HACS — the **H**ome **A**ssistant **C**ommunity **S**tore — is the tool that
-installs community integrations like this one. It isn't built into Home
-Assistant, so you add it once, and it then manages updates for everything you
-install through it.
+HACS — the Home Assistant Community Store — is a one-time install that adds (and
+later updates) community integrations like this one.
+
+**HA OS / Supervised** — the most common setup, and all done in the UI:
+
+1. **Settings → Add-ons → Add-on Store**, then top-right **⋮ → Repositories**,
+   and add `https://github.com/hacs/addons`.
+2. Find **Get HACS** in the store, **Install** it, then **Start** it.
+3. Restart Home Assistant (**Settings → System → top-right power icon → Restart
+   Home Assistant**).
+4. **Settings → Devices & Services → + Add Integration**, search **HACS**, tick
+   the boxes, then authorise with GitHub — open the link it shows, enter the
+   code, approve.
+5. **HACS** now appears in your sidebar. Done.
 
 <details>
-<summary><b>Step-by-step HACS install</b></summary>
+<summary>Running HA Container or Core instead?</summary>
 
-These are the standard steps for **HA OS / Supervised** (the most common setup).
-The full official guide is at <https://hacs.xyz/docs/setup/download>.
+Those don't have add-ons. Open a shell into your Home Assistant and run:
 
-1. Install a terminal add-on so you can run one command: **Settings → Add-ons →
-   Add-on Store**, search **Advanced SSH & Web Terminal**, **Install**, then
-   **Start**. (Any terminal add-on works — "Terminal & SSH" or "Studio Code
-   Server" are fine too.)
-2. Open the terminal (the **Open Web UI** button on the add-on page) and run:
+```bash
+wget -O - https://get.hacs.xyz | bash -
+```
 
-   ```bash
-   wget -O - https://get.hacs.xyz | bash -
-   ```
-
-3. Restart Home Assistant: **Settings → System → ⋮ (top-right) → Restart Home
-   Assistant**.
-4. Add the HACS integration: **Settings → Devices & Services → + Add
-   Integration**, search **HACS**, and select it.
-5. Tick the acknowledgements, then **authorize with GitHub** — HACS shows a
-   short code; open <https://github.com/login/device>, enter the code, and
-   approve.
-6. **HACS** now appears in your sidebar. That's a one-time setup.
-
-> **Container or Core install?** You don't have add-ons — open a shell into your
-> Home Assistant container (or your `config` folder) and run the same
-> `wget … | bash -` command, then restart.
+Then restart Home Assistant and do steps 4–5 above.
 
 </details>
+
+Official guide: <https://hacs.xyz/docs/use/download/download/>.
 
 ### 2. Add this integration to HACS
 
