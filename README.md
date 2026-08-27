@@ -96,7 +96,17 @@ repository** (a one-time step):
 3. The username and password are pre-filled with the **manufacturer's own
    published defaults** (from Enertek's Wi-Fi setup guide) and work on
    unmodified units — just continue.
-4. Finish. Your battery's sensors appear within a few seconds.
+4. Choose your **telemetry source** — SSH (default) or MQTT. See below.
+5. Finish. Your battery's sensors appear within a few seconds.
+
+### Telemetry source: SSH or MQTT
+
+Most units work over **SSH** (the default) — no broker needed. Some gateway
+builds don't log the raw data to disk; those can't be read over SSH, so pick
+**MQTT** at setup instead. MQTT reading requires the broker running and the
+daemon repointed to it (see the [openhomepower-broker](https://github.com/seanlewis/openhomepower-broker)
+project), and you enter the broker host, credentials, and topic serial at setup.
+Everything downstream — sensors, the Energy Dashboard — is identical either way.
 
 <details>
 <summary><b>Prefer not to use HACS? Manual install</b></summary>
