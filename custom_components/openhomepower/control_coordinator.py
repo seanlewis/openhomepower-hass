@@ -7,6 +7,7 @@ changes rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
 from __future__ import annotations
 
 import logging
+import struct
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -69,9 +70,11 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         try:
             regs = await self._reader.read_regs()
-        except (TransportError, OSError) as err:
+        except (TransportError, OSError, IndexError, struct.error) as err:
             # TransportError = SSH; OSError covers the MQTT reader's
             # TimeoutError / ConnectionError (both OSError subclasses).
+            # IndexError/struct.error catch a malformed or short frame (e.g. a
+            # nb=0 fn-03 reply, or a truncated read) from the MQTT reader.
             raise UpdateFailed(f"control read failed: {err}") from err
         # Keep the last-known value for any register not in this batch — config
         # only changes when someone writes it, so a stale-but-unchanged value is

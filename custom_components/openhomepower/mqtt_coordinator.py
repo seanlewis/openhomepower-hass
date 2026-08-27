@@ -38,7 +38,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
         self.regmap = regmap
         # SSH-free MQTT mode passes creds=None: no gateway is built and control
         # read-back rides the broker instead.
-        self.gateway = Gateway(creds) if creds is not None else None
+        self.gateway: Gateway | None = Gateway(creds) if creds is not None else None
         self.device_serial: str | None = None
         self.last_success: float | None = None
         self._stale_seconds = stale_seconds

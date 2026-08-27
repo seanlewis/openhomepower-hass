@@ -11,6 +11,7 @@ Enertek Holdings.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import voluptuous as vol
 
@@ -108,7 +109,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             mqtt = MqttControl(broker)
             # Control read-back follows the entry's read source; writes are MQTT.
             if source == READ_SOURCE_MQTT:
-                reader = MqttConfigReader(hass, mqtt)
+                # A distinct client-id for the read poll so it can never evict
+                # (or be evicted by) a concurrent write on the write client-id.
+                read_cfg = replace(broker, client_id=f"openhomepower-ha-cfg-{broker.serial}")
+                reader = MqttConfigReader(hass, MqttControl(read_cfg))
             else:
                 reader = SshConfigReader(coordinator.gateway)
             control_coordinator = ControlCoordinator(hass, reader, mqtt)

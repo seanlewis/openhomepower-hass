@@ -101,6 +101,8 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                     if error:
                         errors["base"] = error
                     else:
+                        # Serial keeps a second setup of the same battery from
+                        # duplicating every entity.
                         await self.async_set_unique_id(serial or host)
                         self._abort_if_unique_id_configured()
                         return self.async_create_entry(
