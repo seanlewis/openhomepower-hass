@@ -10,25 +10,7 @@ READ-ONLY: this module only subscribes; it never publishes.
 """
 from __future__ import annotations
 
-import sys
-
-# Try relative import first (normal Home Assistant context)
-try:
-    from .protocol import Frame, FrameError, parse_frame
-except (ImportError, ValueError):
-    # Fallback: direct module loading for test environments using importlib.util
-    if "ohp_protocol" in sys.modules:
-        _protocol = sys.modules["ohp_protocol"]
-    else:
-        import importlib.util
-        import pathlib
-        _spec = importlib.util.spec_from_file_location("ohp_protocol", pathlib.Path(__file__).parent / "protocol.py")
-        _protocol = importlib.util.module_from_spec(_spec)
-        sys.modules["ohp_protocol"] = _protocol
-        _spec.loader.exec_module(_protocol)
-    Frame = _protocol.Frame
-    FrameError = _protocol.FrameError
-    parse_frame = _protocol.parse_frame
+from .protocol import Frame, FrameError, parse_frame
 
 
 def strip_payload(payload: bytes) -> bytes:
