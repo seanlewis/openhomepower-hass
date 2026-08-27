@@ -50,6 +50,46 @@ DEFAULT_USERNAME = "homepower"
 DEFAULT_PASSWORD = "123456"   # vendor default, published in Enertek's setup PDF
 
 
+async def _ssh_derive_broker(host: str, port: int,
+                             username: str, password: str) -> dict:
+    """Read the device's MQTT broker config (host/port/creds/serial) over SSH.
+
+    Best-effort and never fatal — returns {} if the device can't be reached.
+    Used only to PRE-FILL the broker form fields (most units still point at the
+    vendor broker, whose fleet credentials aren't published, so reading them off
+    the device is the only easy way to get them). Runtime never depends on SSH.
+    """
+    import re
+
+    import asyncssh
+
+    out: dict = {}
+    try:
+        async with asyncssh.connect(
+            host, port=port, username=username, password=password,
+            known_hosts=None,
+        ) as conn:
+            result = await conn.run(
+                "uci show we2; echo ---; "
+                "grep -oE 'Enertek/[0-9]+/' /tmp/wemonitor.log 2>/dev/null | head -1",
+                timeout=10,
+            )
+            text = result.stdout or ""
+            for key, field in (("host", "host"), ("port", "port"),
+                               ("user", "user"), ("pwd", "pwd")):
+                m = re.search(rf"we2\.mqtt\.{field}='([^']*)'", text)
+                if m:
+                    out[key] = m.group(1)
+            m = re.search(r"Enertek/([0-9]+)/", text)
+            if m:
+                out["serial"] = m.group(1)
+            if "port" in out and out["port"].isdigit():
+                out["port"] = int(out["port"])
+    except Exception:  # noqa: BLE001 - derivation is best-effort, never fatal
+        _LOGGER.debug("could not derive broker settings over SSH", exc_info=True)
+    return out
+
+
 class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenHomepower."""
 
@@ -118,6 +158,14 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                             },
                         )
             suggested_host = host
+            # Preserve what was typed across an error re-render.
+            broker = {
+                "host": user_input.get(CONF_BROKER_HOST, ""),
+                "port": user_input.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
+                "user": user_input.get(CONF_BROKER_USER, ""),
+                "pwd": user_input.get(CONF_BROKER_PASSWORD, ""),
+                "serial": user_input.get(CONF_TOPIC_SERIAL, ""),
+            }
         else:
             # Best-effort autodiscovery so most people never type an address.
             try:
@@ -126,6 +174,14 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             except Exception:  # discovery must never block setup
                 _LOGGER.debug("discovery failed", exc_info=True)
             suggested_host = self._discovered[0] if self._discovered else ""
+            # Pre-fill the MQTT broker fields from the device (vendor defaults
+            # over SSH), so a new user doesn't have to hunt down the broker host,
+            # credentials and serial. Best-effort; left blank if the device isn't
+            # reachable. Runtime stays SSH-free.
+            broker: dict = {}
+            if suggested_host:
+                broker = await _ssh_derive_broker(
+                    suggested_host, DEFAULT_PORT, DEFAULT_USERNAME, DEFAULT_PASSWORD)
 
         schema = vol.Schema({
             vol.Optional(CONF_HOST, default=suggested_host): str,
@@ -143,11 +199,12 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                     ],
                 )
             ),
-            vol.Optional(CONF_BROKER_HOST, default=""): str,
-            vol.Optional(CONF_BROKER_PORT, default=DEFAULT_BROKER_PORT): int,
-            vol.Optional(CONF_BROKER_USER, default=""): str,
-            vol.Optional(CONF_BROKER_PASSWORD, default=""): str,
-            vol.Optional(CONF_TOPIC_SERIAL, default=""): str,
+            vol.Optional(CONF_BROKER_HOST, default=broker.get("host", "")): str,
+            vol.Optional(CONF_BROKER_PORT,
+                         default=broker.get("port", DEFAULT_BROKER_PORT)): int,
+            vol.Optional(CONF_BROKER_USER, default=broker.get("user", "")): str,
+            vol.Optional(CONF_BROKER_PASSWORD, default=broker.get("pwd", "")): str,
+            vol.Optional(CONF_TOPIC_SERIAL, default=broker.get("serial", "")): str,
         })
         return self.async_show_form(
             step_id="user",
@@ -354,34 +411,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                 "serial": data.get(CONF_TOPIC_SERIAL, ""),
             }
 
-        import re
-
-        import asyncssh
-
-        out: dict = {}
-        try:
-            async with asyncssh.connect(
-                data[CONF_HOST], port=data.get(CONF_PORT, DEFAULT_PORT),
-                username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
-                password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
-                known_hosts=None,
-            ) as conn:
-                result = await conn.run(
-                    "uci show we2; echo ---; "
-                    "grep -oE 'Enertek/[0-9]+/' /tmp/wemonitor.log 2>/dev/null | head -1",
-                    timeout=10,
-                )
-                text = result.stdout or ""
-                for key, field in (("host", "host"), ("port", "port"),
-                                   ("user", "user"), ("pwd", "pwd")):
-                    m = re.search(rf"we2\.mqtt\.{field}='([^']*)'", text)
-                    if m:
-                        out[key] = m.group(1)
-                m = re.search(r"Enertek/([0-9]+)/", text)
-                if m:
-                    out["serial"] = m.group(1)
-                if "port" in out and out["port"].isdigit():
-                    out["port"] = int(out["port"])
-        except Exception:  # noqa: BLE001 - derivation is best-effort, never fatal
-            _LOGGER.debug("could not derive broker settings", exc_info=True)
-        return out
+        return await _ssh_derive_broker(
+            data[CONF_HOST], data.get(CONF_PORT, DEFAULT_PORT),
+            data.get(CONF_USERNAME, DEFAULT_USERNAME),
+            data.get(CONF_PASSWORD, DEFAULT_PASSWORD))

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to your Homepower",
-        "description": "Enter your battery's address. Auto-discovery found: {found}\n\nThe defaults below are the manufacturer's own published values and work on unmodified units.",
+        "description": "Enter your battery's address. Auto-discovery found: {found}\n\nThe defaults below are the manufacturer's own published values and work on unmodified units. For the MQTT source, the broker host, credentials and topic serial are read from the battery automatically where possible.",
         "data": {
           "host": "IP address or hostname",
           "port": "SSH port",
