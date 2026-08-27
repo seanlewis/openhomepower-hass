@@ -7,8 +7,8 @@ plain relative imports and need no test-only fallbacks.
 import struct
 
 from openhomepower.control import mqtt_payload
-from openhomepower.mqtt_reader import telemetry_frame
-from openhomepower.protocol import crc16
+from openhomepower.mqtt_reader import telemetry_frame, FrameCache
+from openhomepower.protocol import crc16, merge, parse_frame
 
 
 def make_frame(start: int, regs: list[int], devsn: bytes = b"0000000000") -> bytes:
@@ -34,3 +34,13 @@ def test_telemetry_frame_rejects_non_frame_payload():
     bad = bytearray(mqtt_payload(make_frame(0, [1, 2]), 1))
     bad[-1] ^= 0xFF                                         # corrupt CRC
     assert telemetry_frame(bytes(bad)) is None
+
+
+def test_frame_cache_keeps_latest_per_block():
+    cache = FrameCache()
+    cache.update(parse_frame(make_frame(0, [1, 2])))
+    cache.update(parse_frame(make_frame(76, [9])))
+    cache.update(parse_frame(make_frame(0, [1, 3])))  # newer block-0 frame wins
+    merged = merge(cache.frames())
+    assert merged[0] == 1 and merged[1] == 3     # block 0 updated
+    assert merged[76] == 9                        # block 76 retained

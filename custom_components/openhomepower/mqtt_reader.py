@@ -13,6 +13,19 @@ from __future__ import annotations
 from .protocol import Frame, FrameError, parse_frame
 
 
+class FrameCache:
+    """Newest frame per register block, so a full read is a merge of all blocks."""
+
+    def __init__(self) -> None:
+        self._by_start: dict[int, Frame] = {}
+
+    def update(self, frame: Frame) -> None:
+        self._by_start[frame.start] = frame
+
+    def frames(self) -> list[Frame]:
+        return list(self._by_start.values())
+
+
 def strip_payload(payload: bytes) -> bytes:
     """Remove the daemon's `[seq-digit][0x02]` wrapper if present."""
     if len(payload) > 2 and payload[1] == 0x02:
