@@ -1,9 +1,9 @@
 """OpenHomepower — local monitoring for Energizer Homepower batteries, with
 opt-in control.
 
-Reads are local and read-only (SSH). Control is opt-in and off by default; when
-enabled it publishes to a configurable broker (the vendor broker today, a local
-broker after cutover).
+Reads are local and read-only — SSH log scrape or MQTT broker subscription.
+Control is opt-in and off by default; when enabled it publishes to a
+configurable broker (the vendor broker today, a local broker after cutover).
 
 Not affiliated with, endorsed by, or supported by Energizer, 8 Star Energy or
 Enertek Holdings.
@@ -45,7 +45,7 @@ from .const import (
     SERVICE_SET_SCHEDULE,
 )
 from .control import BrokerConfig, MqttControl
-from .control_coordinator import ControlCoordinator
+from .control_coordinator import ControlCoordinator, MqttConfigReader, SshConfigReader
 from .coordinator import HomepowerCoordinator
 from .mqtt_coordinator import MqttReadCoordinator
 from .registry import RegisterMap
@@ -63,12 +63,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Loading the register map reads a file; keep it off the event loop.
     regmap = await hass.async_add_executor_job(RegisterMap.load)
 
-    creds = Credentials(
-        host=entry.data[CONF_HOST],
-        port=entry.data.get(CONF_PORT, 34522),
-        username=entry.data.get(CONF_USERNAME, "homepower"),
-        password=entry.data.get(CONF_PASSWORD, "123456"),
-    )
     source = entry.data.get(CONF_READ_SOURCE, DEFAULT_READ_SOURCE)
     if source == READ_SOURCE_MQTT:
         serial = str(entry.data[CONF_TOPIC_SERIAL]).strip()
@@ -83,7 +77,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         stale = entry.options.get(
             CONF_STALE_SECONDS,
             entry.data.get(CONF_STALE_SECONDS, DEFAULT_STALE_SECONDS))
-        coordinator = MqttReadCoordinator(hass, entry, regmap, creds, read_broker, stale)
+        # SSH-free: no Credentials, no gateway.
+        coordinator = MqttReadCoordinator(hass, entry, regmap, None, read_broker, stale)
         await coordinator.async_start()
         # Push model: wait for the first broker publish so entities come up with
         # data. On timeout, stop the reader before raising so HA's retry doesn't
@@ -92,6 +87,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await coordinator.async_shutdown()
             raise ConfigEntryNotReady("no telemetry received from the broker yet")
     else:
+        creds = Credentials(
+            host=entry.data[CONF_HOST],
+            port=entry.data.get(CONF_PORT, 34522),
+            username=entry.data.get(CONF_USERNAME, "homepower"),
+            password=entry.data.get(CONF_PASSWORD, "123456"),
+        )
         coordinator = HomepowerCoordinator(
             hass, entry, regmap, creds,
             entry.options.get(CONF_POLL_SECONDS,
@@ -105,9 +106,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         broker = _broker_config(entry)
         if broker is not None:
             mqtt = MqttControl(broker)
-            # Reads ride the shared SSH gateway (local, resilient); only writes use MQTT.
-            control_coordinator = ControlCoordinator(hass, coordinator.gateway, mqtt)
-            # Best-effort: a control-read hiccup must not block the (read-only) setup.
+            # Control read-back follows the entry's read source; writes are MQTT.
+            if source == READ_SOURCE_MQTT:
+                reader = MqttConfigReader(hass, mqtt)
+            else:
+                reader = SshConfigReader(coordinator.gateway)
+            control_coordinator = ControlCoordinator(hass, reader, mqtt)
+            # Best-effort: a control-read hiccup must not block setup.
             await control_coordinator.async_refresh()
             store["control"] = control_coordinator
             store["mqtt"] = mqtt

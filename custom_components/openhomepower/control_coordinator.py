@@ -1,9 +1,9 @@
 """Coordinator for the control entities.
 
-Reads the writable config (mode / max-SoC / reserve / excess) from the same
-LOCAL SSH log the sensors use — so control *state* stays visible even when the
-vendor broker is down. Only *writes* go over MQTT (`self.mqtt`). Config changes
-rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
+Reads the writable config (mode / max-SoC / reserve / excess) via a
+source-specific reader: SSH entries scrape the gateway's log, MQTT entries do an
+fn-03 read over the broker. Only *writes* go over MQTT (`self.mqtt`). Config
+changes rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
 from __future__ import annotations
 
 import logging
@@ -31,23 +31,48 @@ def control_device_info(entry: ConfigEntry) -> DeviceInfo:
     )
 
 
-class ControlCoordinator(DataUpdateCoordinator[dict]):
-    """Reads config over SSH (local, resilient); writes go via MQTT."""
+class SshConfigReader:
+    """Read control config from the gateway's SSH log (fn-03 holding frames)."""
 
-    def __init__(self, hass: HomeAssistant, gateway: Gateway, mqtt: MqttControl) -> None:
+    def __init__(self, gateway: Gateway) -> None:
+        self._gateway = gateway
+
+    async def read_regs(self) -> dict[int, int]:
+        tokens = await self._gateway.read_holding()
+        return control.parse_holding_frames(tokens)
+
+
+class MqttConfigReader:
+    """Read control config over MQTT (fn-03 request/response on the broker)."""
+
+    def __init__(self, hass: HomeAssistant, mqtt: MqttControl) -> None:
+        self._hass = hass
+        self._mqtt = mqtt
+
+    async def read_regs(self) -> dict[int, int]:
+        return await self._hass.async_add_executor_job(self._mqtt.read_config)
+
+
+class ControlCoordinator(DataUpdateCoordinator[dict]):
+    """Reads config via a source-specific reader; writes go via MQTT."""
+
+    def __init__(self, hass: HomeAssistant,
+                 reader: SshConfigReader | MqttConfigReader,
+                 mqtt: MqttControl) -> None:
         super().__init__(
             hass, _LOGGER, name="OpenHomepower control",
             update_interval=CONTROL_SCAN_INTERVAL,
         )
-        self.gateway = gateway
+        self._reader = reader
         self.mqtt = mqtt
 
     async def _async_update_data(self) -> dict:
         try:
-            tokens = await self.gateway.read_holding()
-        except TransportError as err:
+            regs = await self._reader.read_regs()
+        except (TransportError, OSError) as err:
+            # TransportError = SSH; OSError covers the MQTT reader's
+            # TimeoutError / ConnectionError (both OSError subclasses).
             raise UpdateFailed(f"control read failed: {err}") from err
-        regs = control.parse_holding_frames(tokens)
         # Keep the last-known value for any register not in this batch — config
         # only changes when someone writes it, so a stale-but-unchanged value is
         # still the correct value.

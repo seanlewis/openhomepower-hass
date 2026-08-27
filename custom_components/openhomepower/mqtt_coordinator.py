@@ -21,12 +21,12 @@ _LOGGER = logging.getLogger(__name__)
 class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
     """Same data contract as HomepowerCoordinator, fed by a broker subscription.
 
-    A `gateway` is kept (for the opt-in control path and unload symmetry) but
-    telemetry never uses it — it comes from the reader.
+    A `gateway` is kept only for SSH entries; in SSH-free MQTT mode it is None
+    and control read-back uses the broker.
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, regmap: RegisterMap,
-                 creds: Credentials, broker: BrokerConfig, stale_seconds: int) -> None:
+                 creds: Credentials | None, broker: BrokerConfig, stale_seconds: int) -> None:
         # A timer that only checks staleness; fresh data arrives via push.
         # Sample several times per staleness window so entities go unavailable
         # close to stale_seconds after telemetry stops, not at ~2x it. The
@@ -36,7 +36,9 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
                          update_interval=timedelta(seconds=watchdog_interval))
         self.entry = entry
         self.regmap = regmap
-        self.gateway = Gateway(creds)
+        # SSH-free MQTT mode passes creds=None: no gateway is built and control
+        # read-back rides the broker instead.
+        self.gateway = Gateway(creds) if creds is not None else None
         self.device_serial: str | None = None
         self.last_success: float | None = None
         self._stale_seconds = stale_seconds
@@ -97,4 +99,5 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
     async def async_shutdown(self) -> None:
         await super().async_shutdown()
         await self.hass.async_add_executor_job(self._reader.stop)
-        await self.gateway.close()
+        if self.gateway is not None:
+            await self.gateway.close()
