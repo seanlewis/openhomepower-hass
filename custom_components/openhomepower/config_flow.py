@@ -115,6 +115,11 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             frames = await gateway.read_latest(attempts=2)
         except TransportError as err:
+            # The UI can only show a generic "cannot connect", but the underlying
+            # message distinguishes a wrong password from an SSH/algorithm failure
+            # from an unreadable log — log it so a failed setup is diagnosable.
+            _LOGGER.warning(
+                "could not read from the gateway at %s: %s", creds.host, err)
             message = str(err).lower()
             if "password" in message or "username" in message:
                 return None, "invalid_auth"
