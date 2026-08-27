@@ -101,12 +101,16 @@ repository** (a one-time step):
 
 ### Telemetry source: SSH or MQTT
 
-Most units work over **SSH** (the default) — no broker needed. Some gateway
-builds don't log the raw data to disk; those can't be read over SSH, so pick
-**MQTT** at setup instead. MQTT reading requires the broker running and the
-daemon repointed to it (see the [openhomepower-broker](https://github.com/seanlewis/openhomepower-broker)
-project), and you enter the broker host, credentials, and topic serial at setup.
-Everything downstream — sensors, the Energy Dashboard — is identical either way.
+New installs default to **MQTT** — it works on every unit (including gateway
+builds whose daemon doesn't log to disk) and needs no SSH at all: telemetry,
+control writes, and control read-back all run over your broker. Pick **MQTT** and
+enter the broker host, credentials, and topic serial; you don't need the
+battery's SSH address.
+
+**SSH** remains available as an independent option for units you'd rather read
+over the local log with no broker — select it and enter the battery's address.
+Everything downstream — sensors, the Energy Dashboard, and the control entities —
+is identical either way.
 
 <details>
 <summary><b>Prefer not to use HACS? Manual install</b></summary>
