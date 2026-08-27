@@ -1,12 +1,14 @@
 """Read Homepower telemetry off an MQTT broker.
 
-The gateway daemon publishes its input-register frames to the broker unprompted
-(`Enertek/<serial>/Realtime` and `.../Read_All_Input_Registers/Output`). This
-module subscribes, pulls the `0104` frames out of the payloads, and hands them
-to a callback — the same frames the SSH path scrapes from the log, so the shared
-decoder in protocol.py/registry.py does the rest.
+The gateway daemon does not stream telemetry unprompted: it answers a *request*.
+We publish a read-all request to `Enertek/<serial>/Read_All_Input_Registers/Input`
+and the daemon replies on `.../Output` with the full input-register bank as a raw
+little-endian `u16` array (NOT the framed `0104` format the SSH log carries). The
+`Realtime` topic, when a unit emits it, carries the same array behind a 6-byte
+header. Either way the array feeds the shared registry decoder unchanged.
 
-READ-ONLY: this module only subscribes; it never publishes.
+READ-ONLY: the only thing this module publishes is the read-all *request*
+(`ffff`) — it never writes a register. Writes remain the opt-in control path.
 """
 from __future__ import annotations
 
@@ -19,69 +21,63 @@ from collections.abc import Callable
 
 from . import control
 from .control import BrokerConfig
-from .protocol import Frame, FrameError, merge, parse_frame
 
 _LOGGER = logging.getLogger(__name__)
 
 _KEEPALIVE = 20            # PINGREQ cadence (< the 30 s CONNECT keepalive)
 _BACKOFF_MAX = 60
 _CONNECT_TIMEOUT = 8       # bounds how long a hung TCP connect can block stop()
-
-
-class FrameCache:
-    """Newest frame per register block, so a full read is a merge of all blocks."""
-
-    def __init__(self) -> None:
-        self._by_start: dict[int, Frame] = {}
-
-    def update(self, frame: Frame) -> None:
-        self._by_start[frame.start] = frame
-
-    def frames(self) -> list[Frame]:
-        return list(self._by_start.values())
+_REQUEST_INTERVAL = 30     # how often to ask the daemon for a fresh reading
+_REALTIME_HEADER = 6       # bytes of header before the register array on Realtime
 
 
 def strip_payload(payload: bytes) -> bytes:
-    """Remove the daemon's `[seq-digit][0x02]` wrapper if present."""
-    if len(payload) > 2 and payload[1] == 0x02:
+    """Remove the daemon's `[seq-digit][0x02]` wrapper if present.
+
+    Strips whenever the 2-byte wrapper is present, even with nothing after it, so
+    a bare wrapper collapses to empty rather than being read as a register.
+    """
+    if len(payload) >= 2 and payload[1] == 0x02:
         return payload[2:]
     return payload
 
 
-def telemetry_frame(payload: bytes) -> Frame | None:
-    """Parse a wrapped MQTT payload into a telemetry Frame, or None if it isn't one.
+def registers_from_payload(topic: str, payload: bytes) -> dict[int, int] | None:
+    """Decode a telemetry payload into a {register: value} map, or None.
 
-    Non-frame payloads and CRC failures return None (never raise), so a stray
-    publish can't take the subscriber down.
+    Both telemetry topics carry a raw little-endian `u16` register array behind
+    the `[seq][0x02]` wrapper; `Realtime` prefixes it with a 6-byte header, the
+    `Read_All_Input_Registers` reply does not. Returns None for anything too
+    short to be a register dump, so a stray publish can't take the reader down.
     """
-    try:
-        return parse_frame(strip_payload(payload))
-    except FrameError:
+    body = strip_payload(payload)
+    offset = _REALTIME_HEADER if topic.endswith("Realtime") else 0
+    if len(body) < offset + 2:
         return None
-
-
-def readings_from_frames(regmap, frames: list[Frame]):
-    """Merge frames into a register map and decode — the shared telemetry step."""
-    return regmap.decode(merge(frames))
+    body = body[offset:]
+    return {i: int.from_bytes(body[2 * i:2 * i + 2], "little")
+            for i in range(len(body) // 2)}
 
 
 class MqttReader:
-    """Subscribe to the daemon's telemetry topics and emit decoded frames.
+    """Poll the daemon for telemetry over MQTT and emit decoded register maps.
 
     Runs a daemon thread. Reuses control.py's raw-socket MQTT helpers so there is
     no new dependency. Reconnects with backoff until stop() is called.
     """
 
     def __init__(self, cfg: BrokerConfig,
-                 on_update: Callable[[list[Frame]], None],
-                 topics: list[str] | None = None) -> None:
+                 on_update: Callable[[dict[int, int]], None],
+                 topics: list[str] | None = None,
+                 request_interval: int = _REQUEST_INTERVAL) -> None:
         self.cfg = cfg
         self._on_update = on_update
         self._topics = topics if topics is not None else [
             f"Enertek/{cfg.serial}/Realtime",
             f"Enertek/{cfg.serial}/Read_All_Input_Registers/Output",
         ]
-        self._cache = FrameCache()
+        self._request_topic = f"Enertek/{cfg.serial}/Read_All_Input_Registers/Input"
+        self._request_interval = request_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sock: socket.socket | None = None
@@ -156,13 +152,24 @@ class MqttReader:
             self._sock = None
             s.close()
 
+    def _send_request(self, s: socket.socket) -> None:
+        """Ask the daemon for a full input-register reading. `ffff` = read-all."""
+        payload = bytes([0x31, 0x02]) + b"\xff\xff"
+        pub = control._ms(self._request_topic.encode()) + payload
+        s.send(bytes([0x30]) + control._rlen(len(pub)) + pub)
+
     def _recv_loop(self, s: socket.socket) -> None:
         buf = b""
         last_ping = time.time()
+        last_request = 0.0                       # request immediately on entry
         while not self._stop.is_set():
-            if time.time() - last_ping > _KEEPALIVE:
+            now = time.time()
+            if now - last_request > self._request_interval:
+                self._send_request(s)
+                last_request = now
+            if now - last_ping > _KEEPALIVE:
                 s.send(b"\xc0\x00")              # PINGREQ
-                last_ping = time.time()
+                last_ping = now
             try:
                 data = s.recv(4096)
             except socket.timeout:
@@ -175,9 +182,8 @@ class MqttReader:
                 if topic is None:
                     break
                 try:
-                    frame = telemetry_frame(payload)
-                    if frame is not None:
-                        self._cache.update(frame)
-                        self._on_update(self._cache.frames())
+                    regs = registers_from_payload(topic, payload)
+                    if regs:
+                        self._on_update(regs)
                 except Exception:  # noqa: BLE001 - one bad payload must not kill the reader
                     _LOGGER.exception("dropping a telemetry payload the reader could not handle")

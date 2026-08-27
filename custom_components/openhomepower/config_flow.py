@@ -247,9 +247,9 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_probe_mqtt(self, data: dict[str, Any]) -> tuple[str | None, str | None]:
         """Confirm the broker yields decodable telemetry. Returns (serial, error_key).
 
-        Starts a short-lived MqttReader, waits for one telemetry frame, then
-        always stops it again — this must never leak a background thread,
-        whichever way the probe ends.
+        Starts a short-lived MqttReader (which requests a reading), waits for one
+        decodable reply, then always stops it again — this must never leak a
+        background thread, whichever way the probe ends.
         """
         import asyncio
 
@@ -272,10 +272,11 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             client_id=f"openhomepower-ha-probe-{serial}",
         )
         got = asyncio.Event()
-        frames_seen: list = []
+        regs_seen: dict[int, int] = {}
 
-        def _on_update(frames):
-            frames_seen[:] = frames
+        def _on_update(regs):
+            regs_seen.clear()
+            regs_seen.update(regs)
             self.hass.loop.call_soon_threadsafe(got.set)
 
         reader = MqttReader(cfg, _on_update)
@@ -288,7 +289,7 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.hass.async_add_executor_job(reader.stop)
 
         regmap = await self.hass.async_add_executor_job(RegisterMap.load)
-        readings = regmap.decode(merge(frames_seen)) if frames_seen else {}
+        readings = regmap.decode(regs_seen) if regs_seen else {}
         if not readings:
             return None, "no_data"
         dev = readings.get("device_serial")

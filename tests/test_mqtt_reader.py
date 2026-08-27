@@ -1,56 +1,66 @@
-"""MQTT telemetry extraction, verified without Home Assistant.
+"""MQTT telemetry decode, verified without Home Assistant.
 
 Imports through the synthetic `openhomepower` package that conftest.py
 registers — the same pattern test_entities.py uses — so the modules keep
 plain relative imports and need no test-only fallbacks.
+
+The fixtures under tests/fixtures/ are REAL Read_All_Input_Registers/Output and
+Realtime register dumps captured from a unit, with the device serial scrubbed to
+zeros. The daemon replies to a read-all request with the full input-register bank
+as a raw little-endian u16 array; these tests prove that array decodes through
+the shared registry.
 """
-import struct
+import pathlib
 
-from openhomepower.control import mqtt_payload
-from openhomepower.mqtt_reader import telemetry_frame, FrameCache, readings_from_frames
-from openhomepower.protocol import crc16, merge, parse_frame
+from openhomepower.mqtt_reader import registers_from_payload
+from openhomepower.registry import RegisterMap
 
-
-def make_frame(start: int, regs: list[int], devsn: bytes = b"0000000000") -> bytes:
-    """Build a CRC-valid function-04 response frame (secret-free devsn)."""
-    body = (b"\x01\x04" + devsn + struct.pack("<H", start)
-            + bytes([len(regs) * 2])
-            + b"".join(struct.pack("<H", r) for r in regs))
-    return body + struct.pack("<H", crc16(body))
+_FIX = pathlib.Path(__file__).parent / "fixtures"
+_READ_ALL_TOPIC = "Enertek/0000000000/Read_All_Input_Registers/Output"
+_REALTIME_TOPIC = "Enertek/0000000000/Realtime"
 
 
-def test_telemetry_frame_extracts_from_wrapped_payload():
-    frame = make_frame(0, [70, 3520, 118])          # SOC-ish/power-ish sample
-    payload = mqtt_payload(frame, seq=3)             # [0x33][0x02] + frame
-    out = telemetry_frame(payload)
-    assert out is not None
-    assert out.start == 0
-    assert out.registers == (70, 3520, 118)
+def _wrap(dump: bytes) -> bytes:
+    """Prepend the daemon's `[seq][0x02]` wrapper, as seen on the wire."""
+    return bytes([0x31, 0x02]) + dump
 
 
-def test_telemetry_frame_rejects_non_frame_payload():
-    assert telemetry_frame(b"\x33\x02hello") is None       # not a frame
-    assert telemetry_frame(b"") is None                    # empty
-    bad = bytearray(mqtt_payload(make_frame(0, [1, 2]), 1))
-    bad[-1] ^= 0xFF                                         # corrupt CRC
-    assert telemetry_frame(bytes(bad)) is None
+def _dump(name: str) -> bytes:
+    return bytes.fromhex((_FIX / f"{name}_dump.hex").read_text())
 
 
-def test_frame_cache_keeps_latest_per_block():
-    cache = FrameCache()
-    cache.update(parse_frame(make_frame(0, [1, 2])))
-    cache.update(parse_frame(make_frame(76, [9])))
-    cache.update(parse_frame(make_frame(0, [1, 3])))  # newer block-0 frame wins
-    merged = merge(cache.frames())
-    assert merged[0] == 1 and merged[1] == 3     # block 0 updated
-    assert merged[76] == 9                        # block 76 retained
+def test_read_all_dump_decodes_to_real_readings():
+    payload = _wrap(_dump("read_all"))
+    regs = registers_from_payload(_READ_ALL_TOPIC, payload)
+    assert regs is not None and regs[0] == 32          # register array starts at offset 0
+    readings = RegisterMap.load().decode(regs)
+    assert readings["battery_soc_pct"].value == 14
+    assert readings["solar_pv_w"].value == 4732
+    assert readings["ac_voltage_v"].value == 240.5
+    assert readings["device_serial"].value == "0000000000"   # scrubbed fixture
 
 
-def test_readings_from_frames_decodes_via_regmap():
-    # A minimal fake regmap proves the coordinator delegates to merge()+decode().
-    class FakeRegmap:
-        def decode(self, regs):
-            return {"raw_reg0": regs.get(0)}
-    frames = [parse_frame(make_frame(0, [42, 7]))]
-    readings = readings_from_frames(FakeRegmap(), frames)
-    assert readings == {"raw_reg0": 42}
+def test_realtime_dump_decodes_via_six_byte_header_offset():
+    payload = _wrap(_dump("realtime"))
+    regs = registers_from_payload(_REALTIME_TOPIC, payload)
+    readings = RegisterMap.load().decode(regs)
+    # Same array as read-all, just behind a 6-byte header; must still decode sanely.
+    assert readings["battery_soc_pct"].value == 13
+    assert readings["device_serial"].value == "0000000000"
+
+
+def test_realtime_offset_actually_matters():
+    # Decoding the Realtime payload without the 6-byte offset (i.e. as if it were
+    # a Read_All reply) must NOT produce the same sane serial — proving the
+    # topic-specific offset is load-bearing, not cosmetic.
+    payload = _wrap(_dump("realtime"))
+    as_read_all = registers_from_payload(_READ_ALL_TOPIC, payload)   # wrong offset
+    readings = RegisterMap.load().decode(as_read_all)
+    assert readings.get("device_serial") is None or \
+        readings["device_serial"].value != "0000000000"
+
+
+def test_rejects_payloads_too_short_to_be_a_dump():
+    assert registers_from_payload(_READ_ALL_TOPIC, b"") is None
+    assert registers_from_payload(_READ_ALL_TOPIC, b"\x31\x02") is None
+    assert registers_from_payload(_REALTIME_TOPIC, b"\x31\x02\x00\x00") is None  # header only

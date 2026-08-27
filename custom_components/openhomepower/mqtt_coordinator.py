@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .control import BrokerConfig
-from .mqtt_reader import Frame, MqttReader, readings_from_frames
+from .mqtt_reader import MqttReader
 from .registry import Reading, RegisterMap
 from .transport import Credentials, Gateway
 
@@ -51,22 +51,24 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
             return None
         return round(time.monotonic() - self.last_success, 1)
 
-    def _on_update(self, frames: list[Frame]) -> None:
-        """Called from the reader thread; marshal onto the event loop."""
-        readings = readings_from_frames(self.regmap, frames)
+    def _on_update(self, regs: dict[int, int]) -> None:
+        """Called from the reader thread; marshal onto the event loop.
+
+        `regs` is the raw input-register map the reader decoded from one telemetry
+        reply; the registry turns it into readings.
+        """
+        readings = self.regmap.decode(regs)
         if not readings:
             return
-        self.hass.loop.call_soon_threadsafe(self._apply, readings, frames)
+        self.hass.loop.call_soon_threadsafe(self._apply, readings)
 
     @callback
-    def _apply(self, readings: dict[str, Reading], frames: list[Frame]) -> None:
+    def _apply(self, readings: dict[str, Reading]) -> None:
         self.last_success = time.monotonic()
         if self.device_serial is None:
             serial = readings.get("device_serial")
             if serial is not None:
                 self.device_serial = str(serial.value)
-            elif frames:
-                self.device_serial = frames[0].devsn
         self.async_set_updated_data(readings)
         self._first_data.set()
 
