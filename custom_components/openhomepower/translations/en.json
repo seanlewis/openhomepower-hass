@@ -9,7 +9,13 @@
           "port": "SSH port",
           "username": "Username",
           "password": "Password",
-          "poll_seconds": "Poll interval (seconds)"
+          "poll_seconds": "Poll interval (seconds)",
+          "read_source": "Telemetry source",
+          "broker_host": "Broker host (MQTT source)",
+          "broker_port": "Broker port",
+          "broker_user": "Broker username",
+          "broker_password": "Broker password",
+          "topic_serial": "MQTT topic serial"
         }
       }
     },
@@ -17,7 +23,8 @@
       "cannot_connect": "Could not reach the battery. Check the address, and note the gateway briefly drops off WiFi from time to time — try again.",
       "invalid_auth": "The username or password was rejected.",
       "no_data": "Connected, but no telemetry could be decoded. Is the vendor daemon running?",
-      "unknown": "Unexpected error. Check the Home Assistant log."
+      "unknown": "Unexpected error. Check the Home Assistant log.",
+      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial."
     },
     "abort": {
       "already_configured": "This battery is already set up."

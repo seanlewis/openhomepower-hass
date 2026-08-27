@@ -50,6 +50,17 @@ CONF_TOPIC_SERIAL = "topic_serial"
 # live in this (public) source. Only the port default is a plain, non-secret value.
 DEFAULT_BROKER_PORT = 1884
 
+# --- read source (SSH log scrape vs MQTT broker subscription) --------------
+CONF_READ_SOURCE = "read_source"
+READ_SOURCE_SSH = "ssh"
+READ_SOURCE_MQTT = "mqtt"
+DEFAULT_READ_SOURCE = READ_SOURCE_SSH
+
+# Mark telemetry stale (entities unavailable) after this long with no publish.
+# ~3x the daemon's slow idle cadence; overridable per entry.
+CONF_STALE_SECONDS = "stale_seconds"
+DEFAULT_STALE_SECONDS = 180
+
 # Config registers barely change, so poll them rarely.
 CONTROL_SCAN_INTERVAL = timedelta(seconds=600)
 
