@@ -39,10 +39,10 @@ from .const import (
     CONF_TOPIC_SERIAL,
     DEFAULT_BROKER_PORT,
     DEFAULT_POLL_SECONDS,
-    DEFAULT_READ_SOURCE,
     DEFAULT_STALE_SECONDS,
     DOMAIN,
     READ_SOURCE_MQTT,
+    READ_SOURCE_SSH,
     SERVICE_SET_SCHEDULE,
 )
 from .control import BrokerConfig, MqttControl
@@ -64,7 +64,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Loading the register map reads a file; keep it off the event loop.
     regmap = await hass.async_add_executor_job(RegisterMap.load)
 
-    source = entry.data.get(CONF_READ_SOURCE, DEFAULT_READ_SOURCE)
+    # Interpret a stored entry, NOT the config-flow form default. Entries created
+    # before the read-source setting existed (pre-0.3.0) carry no CONF_READ_SOURCE
+    # and are SSH by definition — falling back to the current default (MQTT) would
+    # mis-read them and crash on the absent MQTT broker keys. New entries always
+    # stamp CONF_READ_SOURCE, so this fallback only ever applies to legacy ones.
+    source = entry.data.get(CONF_READ_SOURCE, READ_SOURCE_SSH)
     if source == READ_SOURCE_MQTT:
         serial = str(entry.data[CONF_TOPIC_SERIAL]).strip()
         read_broker = BrokerConfig(
