@@ -1,6 +1,7 @@
 """Push coordinator: telemetry arrives from the MQTT reader, not a poll."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -36,6 +37,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
         self.last_success: float | None = None
         self._stale_seconds = stale_seconds
         self._reader = MqttReader(broker, self._on_update)
+        self._first_data = asyncio.Event()
 
     @property
     def reading_age(self) -> float | None:
@@ -60,6 +62,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
             elif frames:
                 self.device_serial = frames[0].devsn
         self.async_set_updated_data(readings)
+        self._first_data.set()
 
     async def _async_update_data(self) -> dict[str, Reading]:
         """Staleness watchdog only — real updates come from _apply()."""
@@ -72,6 +75,20 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
 
     async def async_start(self) -> None:
         await self.hass.async_add_executor_job(self._reader.start)
+
+    async def async_await_first_data(self, timeout: float) -> bool:
+        """Block until the first telemetry push populates us, or timeout.
+
+        Setup uses this instead of async_config_entry_first_refresh(): a
+        just-started reader has no data yet, and the staleness watchdog would
+        otherwise fail the first refresh (leaking the reader thread across HA's
+        setup retries). Returns True once data has arrived.
+        """
+        try:
+            await asyncio.wait_for(self._first_data.wait(), timeout)
+        except asyncio.TimeoutError:
+            return False
+        return True
 
     async def async_shutdown(self) -> None:
         await super().async_shutdown()

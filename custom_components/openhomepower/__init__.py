@@ -23,6 +23,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from . import control
 from .const import (
@@ -32,15 +33,21 @@ from .const import (
     CONF_BROKER_USER,
     CONF_CONTROL_ENABLED,
     CONF_POLL_SECONDS,
+    CONF_READ_SOURCE,
+    CONF_STALE_SECONDS,
     CONF_TOPIC_SERIAL,
     DEFAULT_BROKER_PORT,
     DEFAULT_POLL_SECONDS,
+    DEFAULT_READ_SOURCE,
+    DEFAULT_STALE_SECONDS,
     DOMAIN,
+    READ_SOURCE_MQTT,
     SERVICE_SET_SCHEDULE,
 )
 from .control import BrokerConfig, MqttControl
 from .control_coordinator import ControlCoordinator
 from .coordinator import HomepowerCoordinator
+from .mqtt_coordinator import MqttReadCoordinator
 from .registry import RegisterMap
 from .transport import Credentials
 
@@ -62,12 +69,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=entry.data.get(CONF_USERNAME, "homepower"),
         password=entry.data.get(CONF_PASSWORD, "123456"),
     )
-    coordinator = HomepowerCoordinator(
-        hass, entry, regmap, creds,
-        entry.options.get(CONF_POLL_SECONDS,
-                          entry.data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS)),
-    )
-    await coordinator.async_config_entry_first_refresh()
+    source = entry.data.get(CONF_READ_SOURCE, DEFAULT_READ_SOURCE)
+    if source == READ_SOURCE_MQTT:
+        serial = str(entry.data[CONF_TOPIC_SERIAL]).strip()
+        broker = BrokerConfig(
+            host=str(entry.data[CONF_BROKER_HOST]).strip(),
+            port=int(entry.data.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT)),
+            username=str(entry.data[CONF_BROKER_USER]).strip(),
+            password=str(entry.data[CONF_BROKER_PASSWORD]),
+            serial=serial,
+            client_id=f"openhomepower-ha-read-{serial}",
+        )
+        stale = entry.options.get(
+            CONF_STALE_SECONDS,
+            entry.data.get(CONF_STALE_SECONDS, DEFAULT_STALE_SECONDS))
+        coordinator = MqttReadCoordinator(hass, entry, regmap, creds, broker, stale)
+        await coordinator.async_start()
+        # Push model: wait for the first broker publish so entities come up with
+        # data. On timeout, stop the reader before raising so HA's retry doesn't
+        # leak a second reader thread.
+        if not await coordinator.async_await_first_data(timeout=min(stale, 30)):
+            await coordinator.async_shutdown()
+            raise ConfigEntryNotReady("no telemetry received from the broker yet")
+    else:
+        coordinator = HomepowerCoordinator(
+            hass, entry, regmap, creds,
+            entry.options.get(CONF_POLL_SECONDS,
+                              entry.data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS)),
+        )
+        await coordinator.async_config_entry_first_refresh()
 
     store: dict = {"coordinator": coordinator, "control": None, "mqtt": None}
 
@@ -140,7 +170,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         store = hass.data[DOMAIN].pop(entry.entry_id)
-        await store["coordinator"].gateway.close()
+        await store["coordinator"].async_shutdown()
         if not any(s.get("mqtt") for s in hass.data[DOMAIN].values()):
             if hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE):
                 hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE)
