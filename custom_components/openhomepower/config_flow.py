@@ -79,7 +79,6 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                         title="Energizer Homepower",
                         data={
                             CONF_READ_SOURCE: READ_SOURCE_MQTT,
-                            CONF_HOST: host,
                             CONF_BROKER_HOST: user_input[CONF_BROKER_HOST].strip(),
                             CONF_BROKER_PORT: user_input.get(
                                 CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
@@ -89,32 +88,33 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                         },
                     )
             else:
-                creds = Credentials(
-                    host=host,
-                    port=user_input.get(CONF_PORT, DEFAULT_PORT),
-                    username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                    password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
-                )
-                serial, error = await self._async_probe(creds)
-                if error:
-                    errors["base"] = error
+                if not host:
+                    errors["base"] = "host_required"
                 else:
-                    # Serial keeps a second setup of the same battery from
-                    # duplicating every entity.
-                    await self.async_set_unique_id(serial or host)
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title="Energizer Homepower",
-                        data={
-                            CONF_READ_SOURCE: READ_SOURCE_SSH,
-                            CONF_HOST: host,
-                            CONF_PORT: creds.port,
-                            CONF_USERNAME: creds.username,
-                            CONF_PASSWORD: creds.password,
-                            CONF_POLL_SECONDS: user_input.get(
-                                CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS),
-                        },
+                    creds = Credentials(
+                        host=host,
+                        port=user_input.get(CONF_PORT, DEFAULT_PORT),
+                        username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
+                        password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
                     )
+                    serial, error = await self._async_probe(creds)
+                    if error:
+                        errors["base"] = error
+                    else:
+                        await self.async_set_unique_id(serial or host)
+                        self._abort_if_unique_id_configured()
+                        return self.async_create_entry(
+                            title="Energizer Homepower",
+                            data={
+                                CONF_READ_SOURCE: READ_SOURCE_SSH,
+                                CONF_HOST: host,
+                                CONF_PORT: creds.port,
+                                CONF_USERNAME: creds.username,
+                                CONF_PASSWORD: creds.password,
+                                CONF_POLL_SECONDS: user_input.get(
+                                    CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS),
+                            },
+                        )
             suggested_host = host
         else:
             # Best-effort autodiscovery so most people never type an address.
@@ -126,7 +126,7 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             suggested_host = self._discovered[0] if self._discovered else ""
 
         schema = vol.Schema({
-            vol.Required(CONF_HOST, default=suggested_host): str,
+            vol.Optional(CONF_HOST, default=suggested_host): str,
             vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
             vol.Optional(CONF_USERNAME, default=DEFAULT_USERNAME): str,
             vol.Optional(CONF_PASSWORD, default=DEFAULT_PASSWORD): str,
@@ -136,8 +136,8 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                 SelectSelectorConfig(
                     mode=SelectSelectorMode.DROPDOWN,
                     options=[
-                        SelectOptionDict(value=READ_SOURCE_SSH, label="SSH log (default)"),
-                        SelectOptionDict(value=READ_SOURCE_MQTT, label="MQTT broker"),
+                        SelectOptionDict(value=READ_SOURCE_SSH, label="SSH log"),
+                        SelectOptionDict(value=READ_SOURCE_MQTT, label="MQTT broker (default)"),
                     ],
                 )
             ),
@@ -284,16 +284,25 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         )
 
     async def _derive_broker(self) -> dict:
-        """Read broker host/port/creds + topic serial off the gateway via SSH.
+        """Defaults for the control-broker form.
 
-        Best-effort and never fatal. Keeps vendor secrets out of this source —
-        they come from the device the user already owns.
+        MQTT entries are SSH-free — reuse the read-broker settings the entry
+        already stores. SSH entries derive from the gateway over SSH.
         """
+        data = self.config_entry.data
+        if data.get(CONF_READ_SOURCE) == READ_SOURCE_MQTT:
+            return {
+                "host": data.get(CONF_BROKER_HOST, ""),
+                "port": data.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
+                "user": data.get(CONF_BROKER_USER, ""),
+                "pwd": data.get(CONF_BROKER_PASSWORD, ""),
+                "serial": data.get(CONF_TOPIC_SERIAL, ""),
+            }
+
         import re
 
         import asyncssh
 
-        data = self.config_entry.data
         out: dict = {}
         try:
             async with asyncssh.connect(

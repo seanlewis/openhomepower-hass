@@ -24,7 +24,8 @@
       "invalid_auth": "The username or password was rejected.",
       "no_data": "Connected, but no telemetry could be decoded. Is the vendor daemon running?",
       "unknown": "Unexpected error. Check the Home Assistant log.",
-      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial."
+      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial.",
+      "host_required": "Enter the battery's address for the SSH source."
     },
     "abort": {
       "already_configured": "This battery is already set up."
