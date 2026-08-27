@@ -309,6 +309,22 @@ class MqttControl:
         finally:
             s.close()
 
+    def read_config(self) -> dict[int, int]:
+        """Read the control holding registers over MQTT (fn-03, read-only).
+
+        Blocking — call via executor. Reuses read(); one short connection per
+        block. Returns {reg: value} covering everything control_state_from_regs
+        needs: mode (231), max-SoC (67), reserve-on (105), and the 120-123 block
+        (reserve-off 121 + excess 123).
+        """
+        regs: dict[int, int] = {}
+        regs[REG_MAX_SOC] = self.read(REG_MAX_SOC, 1)[0]
+        regs[REG_RESERVE_ON] = self.read(REG_RESERVE_ON, 1)[0]
+        for i, value in enumerate(self.read(REG_RESERVE_BLOCK, 4)):
+            regs[REG_RESERVE_BLOCK + i] = value
+        regs[REG_MODE] = self.read(REG_MODE, 1)[0]
+        return regs
+
 
 def _next_publish(buf: bytes):
     """Parse one MQTT PUBLISH out of buf; return (topic, payload, remaining)."""

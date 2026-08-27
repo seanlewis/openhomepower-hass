@@ -92,3 +92,24 @@ def test_parse_holding_multi_and_state():
 def test_parse_holding_rejects_bad_crc():
     bad = _fn03(231, [1])[:-4] + "0000"          # corrupt the CRC
     assert control.parse_holding_frames([bad]) == {}
+
+
+def test_read_config_assembles_registers(monkeypatch):
+    cfg = control.BrokerConfig(host="h", port=1, username="u", password="p",
+                               serial="0000000000")
+    mc = control.MqttControl(cfg)
+    calls = []
+
+    def fake_read(reg, count, timeout=15):
+        calls.append((reg, count))
+        return {67: [90], 105: [5], 120: [100, 8, 2, 40], 231: [2]}[reg]
+
+    monkeypatch.setattr(mc, "read", fake_read)
+    regs = mc.read_config()
+
+    assert regs == {67: 90, 105: 5, 120: 100, 121: 8, 122: 2, 123: 40, 231: 2}
+    assert calls == [(67, 1), (105, 1), (120, 4), (231, 1)]   # minimal fn-03 reads
+    # and it decodes to the control state the entities show
+    assert control.control_state_from_regs(regs) == {
+        "mode": "semi", "max_soc": 90, "reserve_on": 5,
+        "reserve_off": 8, "excess": 40}
