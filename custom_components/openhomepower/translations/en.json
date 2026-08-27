@@ -35,8 +35,10 @@
     "step": {
       "init": {
         "title": "OpenHomepower options",
-        "description": "Monitoring polls no faster than the battery refreshes (15-20s at best).\n\nControl is optional and off by default. Turning it on lets Home Assistant WRITE settings to the battery via the broker below — the vendor broker to start with; point it at your own local broker later and nothing else changes. The topic serial is filled in automatically where possible.",
+        "description": "Telemetry source can be switched here (SSH log or MQTT broker) without losing your entities. MQTT reuses the broker fields below.\n\nMonitoring polls no faster than the battery refreshes (15-20s at best).\n\nControl is optional and off by default. Turning it on lets Home Assistant WRITE settings to the battery via the broker below — the vendor broker to start with; point it at your own local broker later and nothing else changes. The topic serial is filled in automatically where possible.",
         "data": {
+          "read_source": "Telemetry source",
+          "host": "Battery address (SSH source)",
           "poll_seconds": "Poll interval (seconds)",
           "control_enabled": "Enable control (writes to the battery)",
           "broker_host": "Control broker host",
@@ -46,6 +48,10 @@
           "topic_serial": "MQTT topic serial"
         }
       }
+    },
+    "error": {
+      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial.",
+      "host_required": "Enter the battery's address for the SSH source."
     }
   },
   "entity": {

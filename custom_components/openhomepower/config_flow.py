@@ -254,34 +254,87 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(data=user_input)
-
-        opts = self.config_entry.options
+        errors: dict[str, str] = {}
         data = self.config_entry.data
-        poll = opts.get(CONF_POLL_SECONDS,
-                        data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS))
-        # Derive broker host/creds/serial from the device (best-effort) for the
-        # form defaults — nothing sensitive is stored in this source.
-        d = await self._derive_broker()
+        opts = self.config_entry.options
+        current_source = data.get(CONF_READ_SOURCE, READ_SOURCE_SSH)
+
+        if user_input is not None:
+            # The read source lives in entry.data. Switching it here rewrites the
+            # stored connection config; MQTT reuses the broker fields on this
+            # form. The entry's unique_id (serial) never changes, so entities and
+            # their history survive the reload the update-listener triggers.
+            source = user_input.get(CONF_READ_SOURCE, current_source)
+            new_data = dict(data)
+            new_data[CONF_READ_SOURCE] = source
+            if source == READ_SOURCE_MQTT:
+                b_host = str(user_input.get(CONF_BROKER_HOST, "")).strip()
+                b_user = str(user_input.get(CONF_BROKER_USER, "")).strip()
+                b_pwd = str(user_input.get(CONF_BROKER_PASSWORD, ""))
+                b_serial = str(user_input.get(CONF_TOPIC_SERIAL, "")).strip()
+                if not (b_host and b_user and b_pwd and b_serial):
+                    errors["base"] = "mqtt_fields_missing"
+                else:
+                    new_data[CONF_BROKER_HOST] = b_host
+                    new_data[CONF_BROKER_PORT] = int(
+                        user_input.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT))
+                    new_data[CONF_BROKER_USER] = b_user
+                    new_data[CONF_BROKER_PASSWORD] = b_pwd
+                    new_data[CONF_TOPIC_SERIAL] = b_serial
+            else:
+                s_host = str(user_input.get(CONF_HOST, "")).strip()
+                if not s_host:
+                    errors["base"] = "host_required"
+                else:
+                    new_data[CONF_HOST] = s_host
+            if not errors:
+                if new_data != dict(data):
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry, data=new_data)
+                return self.async_create_entry(data=user_input)
+
+        # Defaults come from the resubmission (on error) or the stored config;
+        # broker fields fall back to a best-effort device derivation on first show.
+        src = user_input if user_input is not None else {}
+        d = {} if user_input is not None else await self._derive_broker()
 
         return self.async_show_form(
             step_id="init",
+            errors=errors,
             data_schema=vol.Schema({
-                vol.Optional(CONF_POLL_SECONDS, default=poll):
+                vol.Required(CONF_READ_SOURCE,
+                             default=src.get(CONF_READ_SOURCE, current_source)):
+                    SelectSelector(SelectSelectorConfig(
+                        mode=SelectSelectorMode.DROPDOWN,
+                        options=[
+                            SelectOptionDict(value=READ_SOURCE_SSH, label="SSH log"),
+                            SelectOptionDict(value=READ_SOURCE_MQTT, label="MQTT broker"),
+                        ])),
+                vol.Optional(CONF_HOST,
+                             default=src.get(CONF_HOST, data.get(CONF_HOST, ""))): str,
+                vol.Optional(CONF_POLL_SECONDS,
+                             default=src.get(CONF_POLL_SECONDS,
+                                             opts.get(CONF_POLL_SECONDS,
+                                                      data.get(CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS)))):
                     vol.All(int, vol.Range(min=MIN_POLL_SECONDS, max=3600)),
                 vol.Optional(CONF_CONTROL_ENABLED,
-                             default=opts.get(CONF_CONTROL_ENABLED, False)): bool,
+                             default=src.get(CONF_CONTROL_ENABLED,
+                                             opts.get(CONF_CONTROL_ENABLED, False))): bool,
                 vol.Optional(CONF_BROKER_HOST,
-                             default=opts.get(CONF_BROKER_HOST, d.get("host", ""))): str,
+                             default=src.get(CONF_BROKER_HOST,
+                                             opts.get(CONF_BROKER_HOST, d.get("host", "")))): str,
                 vol.Optional(CONF_BROKER_PORT,
-                             default=opts.get(CONF_BROKER_PORT, d.get("port", DEFAULT_BROKER_PORT))): int,
+                             default=src.get(CONF_BROKER_PORT,
+                                             opts.get(CONF_BROKER_PORT, d.get("port", DEFAULT_BROKER_PORT)))): int,
                 vol.Optional(CONF_BROKER_USER,
-                             default=opts.get(CONF_BROKER_USER, d.get("user", ""))): str,
+                             default=src.get(CONF_BROKER_USER,
+                                             opts.get(CONF_BROKER_USER, d.get("user", "")))): str,
                 vol.Optional(CONF_BROKER_PASSWORD,
-                             default=opts.get(CONF_BROKER_PASSWORD, d.get("pwd", ""))): str,
+                             default=src.get(CONF_BROKER_PASSWORD,
+                                             opts.get(CONF_BROKER_PASSWORD, d.get("pwd", "")))): str,
                 vol.Optional(CONF_TOPIC_SERIAL,
-                             default=opts.get(CONF_TOPIC_SERIAL, d.get("serial", ""))): str,
+                             default=src.get(CONF_TOPIC_SERIAL,
+                                             opts.get(CONF_TOPIC_SERIAL, d.get("serial", "")))): str,
             }),
         )
 
