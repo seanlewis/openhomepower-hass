@@ -25,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _KEEPALIVE = 20            # PINGREQ cadence (< the 30 s CONNECT keepalive)
 _BACKOFF_MAX = 60
+_CONNECT_TIMEOUT = 8       # bounds how long a hung TCP connect can block stop()
 
 
 class FrameCache:
@@ -71,7 +72,7 @@ class MqttReader:
                  topics: list[str] | None = None) -> None:
         self.cfg = cfg
         self._on_update = on_update
-        self._topics = topics or [
+        self._topics = topics if topics is not None else [
             f"Enertek/{cfg.serial}/Realtime",
             f"Enertek/{cfg.serial}/Read_All_Input_Registers/Output",
         ]
@@ -95,8 +96,11 @@ class MqttReader:
             except OSError:
                 pass
         if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+            self._thread.join(timeout=_CONNECT_TIMEOUT + 5)
+            if self._thread.is_alive():
+                _LOGGER.warning("mqtt reader thread did not stop within timeout")
+            else:
+                self._thread = None
 
     def _run(self) -> None:
         backoff = 1
@@ -110,9 +114,19 @@ class MqttReader:
                 _LOGGER.debug("mqtt reader session ended (%s); retry in %ds", err, backoff)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, _BACKOFF_MAX)
+            except Exception:  # noqa: BLE001 - never let the reader thread die silently
+                if self._stop.is_set():
+                    break
+                _LOGGER.exception("mqtt reader session crashed unexpectedly; retry in %ds", backoff)
+                self._stop.wait(backoff)
+                backoff = min(backoff * 2, _BACKOFF_MAX)
 
     def _session(self) -> None:
-        s = socket.create_connection((self.cfg.host, self.cfg.port), timeout=10)
+        # Deliberately not calling control._connect(): building the socket inline
+        # (rather than inside a helper) means stop() can interrupt a hung
+        # handshake by closing self._sock while create_connection/recv is blocked.
+        s = socket.create_connection((self.cfg.host, self.cfg.port),
+                                      timeout=_CONNECT_TIMEOUT)
         self._sock = s
         try:
             s.settimeout(3)
@@ -128,8 +142,9 @@ class MqttReader:
             for i, topic in enumerate(self._topics):
                 sub = struct.pack("!H", i + 1) + control._ms(topic.encode()) + bytes([0])
                 s.send(bytes([0x82]) + control._rlen(len(sub)) + sub)
-                time.sleep(0.2)
-                s.recv(64)                       # drain SUBACK
+            # No separate SUBACK drain: control._next_publish skips non-PUBLISH
+            # packets (SUBACK is type 9), so _recv_loop consumes them safely
+            # without risking an over-read that clips a following PUBLISH.
             self._recv_loop(s)
         finally:
             self._sock = None
@@ -153,7 +168,10 @@ class MqttReader:
                 topic, payload, buf = control._next_publish(buf)
                 if topic is None:
                     break
-                frame = telemetry_frame(payload)
-                if frame is not None:
-                    self._cache.update(frame)
-                    self._on_update(self._cache.frames())
+                try:
+                    frame = telemetry_frame(payload)
+                    if frame is not None:
+                        self._cache.update(frame)
+                        self._on_update(self._cache.frames())
+                except Exception:  # noqa: BLE001 - one bad payload must not kill the reader
+                    _LOGGER.exception("dropping a telemetry payload the reader could not handle")
