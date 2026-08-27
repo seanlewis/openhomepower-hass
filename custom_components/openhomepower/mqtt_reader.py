@@ -127,9 +127,10 @@ class MqttReader:
                 backoff = min(backoff * 2, _BACKOFF_MAX)
 
     def _session(self) -> None:
-        # Deliberately not calling control._connect(): building the socket inline
-        # (rather than inside a helper) means stop() can interrupt a hung
-        # handshake by closing self._sock while create_connection/recv is blocked.
+        # Deliberately not calling control._connect(): the CONNECT/CONNACK bytes
+        # are inlined here so the connect timeout and the recv loop's stop-check
+        # bound shutdown latency (_CONNECT_TIMEOUT + join window), rather than
+        # reusing a helper that hides those bounds.
         s = socket.create_connection((self.cfg.host, self.cfg.port),
                                       timeout=_CONNECT_TIMEOUT)
         self._sock = s

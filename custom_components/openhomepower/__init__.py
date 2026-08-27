@@ -72,7 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     source = entry.data.get(CONF_READ_SOURCE, DEFAULT_READ_SOURCE)
     if source == READ_SOURCE_MQTT:
         serial = str(entry.data[CONF_TOPIC_SERIAL]).strip()
-        broker = BrokerConfig(
+        read_broker = BrokerConfig(
             host=str(entry.data[CONF_BROKER_HOST]).strip(),
             port=int(entry.data.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT)),
             username=str(entry.data[CONF_BROKER_USER]).strip(),
@@ -83,12 +83,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         stale = entry.options.get(
             CONF_STALE_SECONDS,
             entry.data.get(CONF_STALE_SECONDS, DEFAULT_STALE_SECONDS))
-        coordinator = MqttReadCoordinator(hass, entry, regmap, creds, broker, stale)
+        coordinator = MqttReadCoordinator(hass, entry, regmap, creds, read_broker, stale)
         await coordinator.async_start()
         # Push model: wait for the first broker publish so entities come up with
         # data. On timeout, stop the reader before raising so HA's retry doesn't
         # leak a second reader thread.
-        if not await coordinator.async_await_first_data(timeout=min(stale, 30)):
+        if not await coordinator.async_await_first_data(timeout=min(stale, 45)):
             await coordinator.async_shutdown()
             raise ConfigEntryNotReady("no telemetry received from the broker yet")
     else:
@@ -99,20 +99,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         await coordinator.async_config_entry_first_refresh()
 
-    store: dict = {"coordinator": coordinator, "control": None, "mqtt": None}
+    try:
+        store: dict = {"coordinator": coordinator, "control": None, "mqtt": None}
 
-    broker = _broker_config(entry)
-    if broker is not None:
-        mqtt = MqttControl(broker)
-        # Reads ride the shared SSH gateway (local, resilient); only writes use MQTT.
-        control_coordinator = ControlCoordinator(hass, coordinator.gateway, mqtt)
-        # Best-effort: a control-read hiccup must not block the (read-only) setup.
-        await control_coordinator.async_refresh()
-        store["control"] = control_coordinator
-        store["mqtt"] = mqtt
+        broker = _broker_config(entry)
+        if broker is not None:
+            mqtt = MqttControl(broker)
+            # Reads ride the shared SSH gateway (local, resilient); only writes use MQTT.
+            control_coordinator = ControlCoordinator(hass, coordinator.gateway, mqtt)
+            # Best-effort: a control-read hiccup must not block the (read-only) setup.
+            await control_coordinator.async_refresh()
+            store["control"] = control_coordinator
+            store["mqtt"] = mqtt
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = store
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = store
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        # Setup failed after the reader/gateway were live; stop them so HA's
+        # retry doesn't leak a second reader on the same client_id.
+        await coordinator.async_shutdown()
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        raise
     _register_services(hass)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True

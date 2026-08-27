@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .control import BrokerConfig
-from .mqtt_reader import MqttReader, readings_from_frames
+from .mqtt_reader import Frame, MqttReader, readings_from_frames
 from .registry import Reading, RegisterMap
 from .transport import Credentials, Gateway
 
@@ -28,8 +28,12 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, regmap: RegisterMap,
                  creds: Credentials, broker: BrokerConfig, stale_seconds: int) -> None:
         # A timer that only checks staleness; fresh data arrives via push.
+        # Sample several times per staleness window so entities go unavailable
+        # close to stale_seconds after telemetry stops, not at ~2x it. The
+        # deadline itself stays stale_seconds (see _async_update_data).
+        watchdog_interval = max(15, stale_seconds // 3)
         super().__init__(hass, _LOGGER, name="OpenHomepower (MQTT)",
-                         update_interval=timedelta(seconds=stale_seconds))
+                         update_interval=timedelta(seconds=watchdog_interval))
         self.entry = entry
         self.regmap = regmap
         self.gateway = Gateway(creds)
@@ -45,7 +49,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
             return None
         return round(time.monotonic() - self.last_success, 1)
 
-    def _on_update(self, frames) -> None:
+    def _on_update(self, frames: list[Frame]) -> None:
         """Called from the reader thread; marshal onto the event loop."""
         readings = readings_from_frames(self.regmap, frames)
         if not readings:
@@ -53,7 +57,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
         self.hass.loop.call_soon_threadsafe(self._apply, readings, frames)
 
     @callback
-    def _apply(self, readings: dict[str, Reading], frames) -> None:
+    def _apply(self, readings: dict[str, Reading], frames: list[Frame]) -> None:
         self.last_success = time.monotonic()
         if self.device_serial is None:
             serial = readings.get("device_serial")
