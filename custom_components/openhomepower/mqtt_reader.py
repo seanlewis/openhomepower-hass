@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 from . import control
 from .control import BrokerConfig
-from .protocol import Frame, FrameError, parse_frame
+from .protocol import Frame, FrameError, merge, parse_frame
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +58,11 @@ def telemetry_frame(payload: bytes) -> Frame | None:
         return parse_frame(strip_payload(payload))
     except FrameError:
         return None
+
+
+def readings_from_frames(regmap, frames: list[Frame]):
+    """Merge frames into a register map and decode — the shared telemetry step."""
+    return regmap.decode(merge(frames))
 
 
 class MqttReader:

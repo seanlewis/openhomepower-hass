@@ -7,7 +7,7 @@ plain relative imports and need no test-only fallbacks.
 import struct
 
 from openhomepower.control import mqtt_payload
-from openhomepower.mqtt_reader import telemetry_frame, FrameCache
+from openhomepower.mqtt_reader import telemetry_frame, FrameCache, readings_from_frames
 from openhomepower.protocol import crc16, merge, parse_frame
 
 
@@ -44,3 +44,13 @@ def test_frame_cache_keeps_latest_per_block():
     merged = merge(cache.frames())
     assert merged[0] == 1 and merged[1] == 3     # block 0 updated
     assert merged[76] == 9                        # block 76 retained
+
+
+def test_readings_from_frames_decodes_via_regmap():
+    # A minimal fake regmap proves the coordinator delegates to merge()+decode().
+    class FakeRegmap:
+        def decode(self, regs):
+            return {"raw_reg0": regs.get(0)}
+    frames = [parse_frame(make_frame(0, [42, 7]))]
+    readings = readings_from_frames(FakeRegmap(), frames)
+    assert readings == {"raw_reg0": 42}
