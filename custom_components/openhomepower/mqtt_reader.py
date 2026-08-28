@@ -3,9 +3,13 @@
 The gateway daemon does not stream telemetry unprompted: it answers a *request*.
 We publish a read-all request to `Enertek/<serial>/Read_All_Input_Registers/Input`
 and the daemon replies on `.../Output` with the full input-register bank as a raw
-little-endian `u16` array (NOT the framed `0104` format the SSH log carries). The
-`Realtime` topic, when a unit emits it, carries the same array behind a 6-byte
-header. Either way the array feeds the shared registry decoder unchanged.
+little-endian `u16` array (NOT the framed `0104` format the SSH log carries). That
+array feeds the shared registry decoder unchanged.
+
+We deliberately do NOT consume the daemon's unprompted `Realtime` pushes: their
+header layout varies between units (e.g. 570 vs 526 bytes), so decoding them at a
+fixed offset produces a byte-shifted, garbage reading. The reply to our own
+request is consistent across units, so we rely on it alone.
 
 READ-ONLY: the only thing this module publishes is the read-all *request*
 (`ffff`) — it never writes a register. Writes remain the opt-in control path.
@@ -72,8 +76,10 @@ class MqttReader:
                  request_interval: int = _REQUEST_INTERVAL) -> None:
         self.cfg = cfg
         self._on_update = on_update
+        # Only the reply to our own request. NOT `.../Realtime` — its header
+        # layout varies per unit, so decoding it byte-shifts into garbage (seen
+        # as readings alternating between good and corrupt values).
         self._topics = topics if topics is not None else [
-            f"Enertek/{cfg.serial}/Realtime",
             f"Enertek/{cfg.serial}/Read_All_Input_Registers/Output",
         ]
         self._request_topic = f"Enertek/{cfg.serial}/Read_All_Input_Registers/Input"

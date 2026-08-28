@@ -12,5 +12,5 @@
   "requirements": [
     "asyncssh>=2.14,<2.24"
   ],
-  "version": "0.5.2"
+  "version": "0.5.3"
 }
