@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .control import BrokerConfig
-from .mqtt_reader import MqttReader
+from .mqtt_reader import MqttReader, plausible_reading
 from .registry import Reading, RegisterMap
 from .transport import Credentials, Gateway
 
@@ -58,7 +58,7 @@ class MqttReadCoordinator(DataUpdateCoordinator[dict[str, Reading]]):
         reply; the registry turns it into readings.
         """
         readings = self.regmap.decode(regs)
-        if not readings:
+        if not readings or not plausible_reading(readings):
             return
         self.hass.loop.call_soon_threadsafe(self._apply, readings)
 

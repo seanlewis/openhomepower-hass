@@ -12,7 +12,7 @@ the shared registry.
 """
 import pathlib
 
-from openhomepower.mqtt_reader import registers_from_payload
+from openhomepower.mqtt_reader import plausible_reading, registers_from_payload
 from openhomepower.registry import RegisterMap
 
 _FIX = pathlib.Path(__file__).parent / "fixtures"
@@ -64,3 +64,22 @@ def test_rejects_payloads_too_short_to_be_a_dump():
     assert registers_from_payload(_READ_ALL_TOPIC, b"") is None
     assert registers_from_payload(_READ_ALL_TOPIC, b"\x31\x02") is None
     assert registers_from_payload(_REALTIME_TOPIC, b"\x31\x02\x00\x00") is None  # header only
+
+
+class _R:
+    def __init__(self, value):
+        self.value = value
+
+
+def test_plausible_accepts_a_real_decode():
+    regs = registers_from_payload(_READ_ALL_TOPIC, _wrap(_dump("read_all")))
+    readings = RegisterMap.load().decode(regs)
+    assert plausible_reading(readings) is True
+
+
+def test_plausible_rejects_garbage_decodes():
+    assert plausible_reading({"device_serial": _R("\x0005120"),
+                              "battery_soc_pct": _R(14)}) is False   # non-digit serial
+    assert plausible_reading({"device_serial": _R("0000000000"),
+                              "battery_soc_pct": _R(8555)}) is False  # SOC out of range
+    assert plausible_reading({"battery_soc_pct": _R(14)}) is False    # no serial at all

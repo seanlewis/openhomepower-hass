@@ -63,6 +63,25 @@ def registers_from_payload(topic: str, payload: bytes) -> dict[int, int] | None:
             for i in range(len(body) // 2)}
 
 
+def plausible_reading(readings: dict) -> bool:
+    """Reject a byte-shifted / partial decode.
+
+    Some units answer the read-all request with a reply that doesn't decode to
+    the full register bank, seen as readings flickering between good values and
+    garbage (a non-numeric serial, an out-of-range SOC). A genuine full-bank
+    reading has an all-digit serial and a 0-100 SOC — drop anything that doesn't,
+    so the corrupt frames never reach the entities. `readings` maps key -> an
+    object with a `.value` (registry Reading).
+    """
+    ser = readings.get("device_serial")
+    soc = readings.get("battery_soc_pct")
+    if ser is None or not str(ser.value).isdigit():
+        return False
+    if soc is None or soc.value is None or not (0 <= soc.value <= 100):
+        return False
+    return True
+
+
 class MqttReader:
     """Poll the daemon for telemetry over MQTT and emit decoded register maps.
 
@@ -187,6 +206,10 @@ class MqttReader:
                 topic, payload, buf = control._next_publish(buf)
                 if topic is None:
                     break
+                # Logs the raw wire format (enable debug logging for this
+                # component to diagnose a unit whose reply differs from the norm).
+                _LOGGER.debug("telemetry payload: topic=%s len=%d head=%s",
+                              topic, len(payload), payload[:24].hex())
                 try:
                     regs = registers_from_payload(topic, payload)
                     if regs:
