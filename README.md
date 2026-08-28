@@ -137,6 +137,9 @@ you'd repeat this by hand for each new version.
 The daily counters reset at device-local midnight; `total_increasing` means
 Home Assistant handles that correctly.
 
+→ **[Step-by-step walkthrough](examples/energy-dashboard.md)** — the exact field
+in each Energy card, plus the AC-vs-DC and double-counting gotchas.
+
 ## How it works
 
 The "Homepower" on your network is a **WeClouds MT7628 gateway running OpenWrt**
