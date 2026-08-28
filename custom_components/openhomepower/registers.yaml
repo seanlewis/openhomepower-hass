@@ -369,7 +369,10 @@ composites:
     kind: ascii
     registers: [120, 121, 122, 123, 124]
     confidence: confirmed
-    label: Device serial
+    # An internal firmware serial reported in the device's data frames — NOT the
+    # serial shown in the vendor portal (that's a different identifier), so it's
+    # labelled distinctly to avoid the "this doesn't match my portal" confusion.
+    label: Firmware serial
 
 # --- derived (computed by the client, not registers) -----------------------
 
