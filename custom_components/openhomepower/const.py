@@ -59,6 +59,12 @@ READ_SOURCE_MQTT = "mqtt"
 READ_SOURCE_AUTO = "auto"
 DEFAULT_READ_SOURCE = READ_SOURCE_AUTO
 
+# --- moving between the vendor broker and the local broker add-on ------------
+# Options-only bookkeeping written by the Configure menu's move steps.
+CONF_LOCAL_BROKER = "local_broker"      # True once moved to the local add-on
+CONF_VENDOR_BROKER = "vendor_broker"    # the vendor settings to restore on move-back
+CONF_HA_IP = "ha_ip"                    # form field: the address the battery should use
+
 # Mark telemetry stale (entities unavailable) after this long with no publish.
 # ~3x the daemon's slow idle cadence; overridable per entry.
 CONF_STALE_SECONDS = "stale_seconds"

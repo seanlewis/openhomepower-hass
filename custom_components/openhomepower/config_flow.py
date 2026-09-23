@@ -1,6 +1,7 @@
 """Config flow: find the battery, verify it, create the entry."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -34,6 +35,9 @@ from .const import (
     DEFAULT_BROKER_PORT,
     DEFAULT_POLL_SECONDS,
     DEFAULT_READ_SOURCE,
+    CONF_HA_IP,
+    CONF_LOCAL_BROKER,
+    CONF_VENDOR_BROKER,
     DOMAIN,
     MIN_POLL_SECONDS,
     READ_SOURCE_AUTO,
@@ -353,7 +357,33 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
     cutover (change the host here; nothing else moves).
     """
 
+    def __init__(self) -> None:
+        self._move_task: asyncio.Task | None = None
+        self._move_host = ""
+        self._move_plan: dict = {}
+        self._move_error: str | None = None
+        self._move_verified = False
+
     async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """A menu where add-ons exist (the move steps need one); otherwise
+        straight to the settings form, as before."""
+        try:
+            from homeassistant.helpers.hassio import is_hassio
+
+            supervised = is_hassio(self.hass)
+        except ImportError:
+            supervised = False
+        if not supervised:
+            return await self.async_step_settings(user_input)
+        local = self.config_entry.options.get(CONF_LOCAL_BROKER, False)
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["settings", "move_vendor" if local else "move_local"],
+        )
+
+    async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -393,7 +423,11 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                 if new_data != dict(data):
                     self.hass.config_entries.async_update_entry(
                         self.config_entry, data=new_data)
-                return self.async_create_entry(data=user_input)
+                # Options are replaced wholesale on save; carry the move
+                # bookkeeping through, or "Move back" would lose its settings.
+                kept = {k: opts[k] for k in (CONF_LOCAL_BROKER, CONF_VENDOR_BROKER)
+                        if k in opts}
+                return self.async_create_entry(data={**kept, **user_input})
 
         # Defaults come from the resubmission (on error) or the stored config;
         # broker fields fall back to a best-effort device derivation on first show.
@@ -401,7 +435,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         d = {} if user_input is not None else await self._derive_broker()
 
         return self.async_show_form(
-            step_id="init",
+            step_id="settings",
             errors=errors,
             data_schema=vol.Schema({
                 vol.Required(CONF_READ_SOURCE,
@@ -460,3 +494,295 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             data[CONF_HOST], data.get(CONF_PORT, DEFAULT_PORT),
             data.get(CONF_USERNAME, DEFAULT_USERNAME),
             data.get(CONF_PASSWORD, DEFAULT_PASSWORD))
+
+    # --- moving between Enertek's broker and the local broker add-on ----------
+    #
+    # Each move is: a form (confirm + addresses) -> quick checks that change
+    # nothing -> a progress screen running the move -> a result message. The
+    # gateway work lives in local_broker.py; this only orchestrates and records
+    # the outcome on the entry.
+
+    def _gateway_login(self, host: str):
+        from .local_broker import GatewayLogin
+
+        data = self.config_entry.data
+        return GatewayLogin(
+            host=host,
+            port=int(data.get(CONF_PORT, DEFAULT_PORT)),
+            username=data.get(CONF_USERNAME, DEFAULT_USERNAME),
+            password=data.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+        )
+
+    def _move_form(self, step_id: str, errors: dict, error: str,
+                   ha_ip: str | None) -> ConfigFlowResult:
+        fields: dict = {
+            vol.Required(CONF_HOST, default=self._move_host): str,
+        }
+        if ha_ip is not None:
+            fields[vol.Required(CONF_HA_IP, default=ha_ip)] = str
+        return self.async_show_form(
+            step_id=step_id, data_schema=vol.Schema(fields), errors=errors,
+            description_placeholders={"error": error},
+        )
+
+    async def _async_run_with_progress(self, step_id: str, work) -> ConfigFlowResult | None:
+        """Drive `work` behind a progress screen. Returns None once it's done.
+
+        The work runs as a background task shielded from the flow: if the dialog
+        is closed mid-move, the move (including any rollback) still finishes
+        rather than stopping with the gateway half-changed.
+        """
+        if self._move_task is None:
+            inner = self.hass.async_create_background_task(work(), "openhomepower move")
+
+            async def _wait():
+                return await asyncio.shield(inner)
+
+            self._move_task = self.hass.async_create_task(_wait())
+        if not self._move_task.done():
+            return self.async_show_progress(
+                step_id=step_id, progress_action="moving",
+                progress_task=self._move_task,
+            )
+        return None
+
+    def _move_result(self) -> tuple[Any, str | None]:
+        from .local_broker import MoveError
+
+        task, self._move_task = self._move_task, None
+        try:
+            return task.result(), None
+        except MoveError as err:
+            return None, str(err)
+        except Exception as err:  # noqa: BLE001 - surface anything else too
+            _LOGGER.exception("moving the battery failed")
+            return None, f"Unexpected error: {err}"
+
+    def _save_broker(self, broker: dict, local: bool,
+                     vendor: dict | None) -> None:
+        """Point the entry's control (and, for MQTT entries, read) broker at
+        `broker`. The update listener reloads the entry."""
+        opts = dict(self.config_entry.options)
+        opts.update({
+            CONF_BROKER_HOST: broker["host"],
+            CONF_BROKER_PORT: int(broker["port"]),
+            CONF_BROKER_USER: broker["user"],
+            CONF_BROKER_PASSWORD: broker["pwd"],
+            CONF_TOPIC_SERIAL: broker["serial"],
+            CONF_LOCAL_BROKER: local,
+        })
+        if vendor is not None:
+            opts[CONF_VENDOR_BROKER] = vendor
+        data = dict(self.config_entry.data)
+        if data.get(CONF_READ_SOURCE) == READ_SOURCE_MQTT:
+            data.update({
+                CONF_BROKER_HOST: broker["host"],
+                CONF_BROKER_PORT: int(broker["port"]),
+                CONF_BROKER_USER: broker["user"],
+                CONF_BROKER_PASSWORD: broker["pwd"],
+                CONF_TOPIC_SERIAL: broker["serial"],
+            })
+        self.hass.config_entries.async_update_entry(
+            self.config_entry, data=data, options=opts)
+
+    # -- to the local broker --
+
+    async def async_step_move_local(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        from .local_broker import (
+            LOCAL_BROKER_PORT, BrokerAddon, GatewayAdmin, MoveError,
+            home_assistant_ip, merge_addon_options, redirect_rule)
+
+        self._move_task = None
+        if user_input is None:
+            self._move_host = self.config_entry.data.get(CONF_HOST, "")
+            return self._move_form("move_local", {}, "",
+                                   await home_assistant_ip(self.hass))
+
+        self._move_host = user_input[CONF_HOST].strip()
+        ha_ip = user_input[CONF_HA_IP].strip()
+        # Checks that change nothing: fail here and the battery is untouched.
+        try:
+            redirect_rule(ha_ip, LOCAL_BROKER_PORT)
+            addon = await BrokerAddon.find(self.hass)
+            login = self._gateway_login(self._move_host)
+            gateway = GatewayAdmin(login)
+            await gateway.check_include()
+            device = await _ssh_derive_broker(
+                login.host, login.port, login.username, login.password)
+            if not (device.get("user") and device.get("pwd")):
+                raise MoveError("Couldn't read the battery's broker login from it.")
+            opts, data = self.config_entry.options, self.config_entry.data
+            serial = str(opts.get(CONF_TOPIC_SERIAL) or data.get(CONF_TOPIC_SERIAL)
+                         or device.get("serial") or "").strip()
+            if not serial:
+                raise MoveError("Couldn't find the battery's MQTT topic serial.")
+            addon_opts, client_pw = merge_addon_options(
+                await addon.options(), serial, device["user"], device["pwd"])
+        except MoveError as err:
+            return self._move_form("move_local", {"base": "move_check_failed"},
+                                   str(err), ha_ip)
+
+        # What "Move back" restores: the broker the battery used until now —
+        # unless the entry already points at a local broker (a manual move), in
+        # which case the device's own settings are the vendor ones.
+        already_local = (opts.get(CONF_LOCAL_BROKER)
+                         or opts.get(CONF_BROKER_HOST) == ha_ip
+                         or int(opts.get(CONF_BROKER_PORT, 0) or 0) == LOCAL_BROKER_PORT)
+        if opts.get(CONF_BROKER_HOST) and not already_local:
+            vendor = {"host": opts[CONF_BROKER_HOST],
+                      "port": int(opts.get(CONF_BROKER_PORT, DEFAULT_BROKER_PORT)),
+                      "user": opts.get(CONF_BROKER_USER, ""),
+                      "pwd": opts.get(CONF_BROKER_PASSWORD, "")}
+        else:
+            vendor = {"host": device.get("host", ""),
+                      "port": int(device.get("port", DEFAULT_BROKER_PORT)),
+                      "user": device["user"], "pwd": device["pwd"]}
+        self._move_plan = {
+            "addon": addon, "addon_opts": addon_opts, "gateway": gateway,
+            "local": {"host": ha_ip, "port": LOCAL_BROKER_PORT, "user": serial,
+                      "pwd": client_pw, "serial": serial},
+            "vendor": {**vendor, "serial": serial},
+        }
+        return await self.async_step_move_local_run()
+
+    async def async_step_move_local_run(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        shown = await self._async_run_with_progress("move_local_run", self._do_move_local)
+        if shown is not None:
+            return shown
+        _, self._move_error = self._move_result()
+        return self.async_show_progress_done(next_step_id="move_local_done")
+
+    async def _do_move_local(self) -> None:
+        from .control import BrokerConfig
+        from .local_broker import (
+            BROKER_READY_TIMEOUT, MoveError, battery_answers, broker_accepts)
+
+        plan = self._move_plan
+        local, gateway = plan["local"], plan["gateway"]
+        cfg = BrokerConfig(host=local["host"], port=local["port"],
+                           username=local["user"], password=local["pwd"],
+                           serial=local["serial"])
+
+        await plan["addon"].apply(plan["addon_opts"])
+        if not await broker_accepts(self.hass, cfg, BROKER_READY_TIMEOUT):
+            raise MoveError("The broker add-on didn't accept Home Assistant's login after "
+                            "restarting. Check the add-on's Log tab. The battery hasn't "
+                            "been changed.")
+        try:
+            await gateway.apply_redirect(local["host"], local["port"])
+        except MoveError:
+            # Nothing is applied until the reboot, so tidying the file is enough.
+            try:
+                await gateway.remove_redirect()
+            except MoveError:
+                pass
+            raise
+        await gateway.reboot()
+        if await battery_answers(self.hass, cfg):
+            return
+
+        _LOGGER.warning("battery didn't reach the local broker; rolling back")
+        try:
+            await gateway.wait_until_back()
+            await gateway.remove_redirect()
+            await gateway.reboot()
+        except MoveError as err:
+            raise MoveError(
+                "The battery didn't connect to the local broker, and undoing the change "
+                f"also failed ({err}). Use the manual Undo steps in the broker add-on's "
+                "documentation.") from err
+        raise MoveError(
+            "The battery didn't connect to the local broker within 6 minutes, so the "
+            "change has been undone and the battery is going back to Enertek's broker. "
+            "Check the broker add-on's Log tab, and that the Home Assistant address is "
+            "right.")
+
+    async def async_step_move_local_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if self._move_error:
+            return self.async_abort(reason="move_failed",
+                                    description_placeholders={"error": self._move_error})
+        plan = self._move_plan
+        self._save_broker(plan["local"], local=True, vendor=plan["vendor"])
+        return self.async_abort(reason="moved_local")
+
+    # -- back to Enertek's broker --
+
+    async def async_step_move_vendor(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        from .local_broker import GatewayAdmin, MoveError
+
+        self._move_task = None
+        if user_input is None:
+            self._move_host = self.config_entry.data.get(CONF_HOST, "")
+            return self._move_form("move_vendor", {}, "", None)
+
+        self._move_host = user_input[CONF_HOST].strip()
+        opts = self.config_entry.options
+        try:
+            login = self._gateway_login(self._move_host)
+            gateway = GatewayAdmin(login)
+            await gateway.run("true")
+            vendor = opts.get(CONF_VENDOR_BROKER)
+            if not vendor:
+                device = await _ssh_derive_broker(
+                    login.host, login.port, login.username, login.password)
+                vendor = {"host": device.get("host", ""),
+                          "port": int(device.get("port", DEFAULT_BROKER_PORT)),
+                          "user": device.get("user", ""), "pwd": device.get("pwd", ""),
+                          "serial": device.get("serial", "")}
+            vendor = dict(vendor)
+            vendor.setdefault("serial", "")
+            vendor["serial"] = vendor["serial"] or str(opts.get(CONF_TOPIC_SERIAL, ""))
+        except MoveError as err:
+            return self._move_form("move_vendor", {"base": "move_check_failed"},
+                                   str(err), None)
+        self._move_plan = {"gateway": gateway, "vendor": vendor}
+        return await self.async_step_move_vendor_run()
+
+    async def async_step_move_vendor_run(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        shown = await self._async_run_with_progress("move_vendor_run", self._do_move_vendor)
+        if shown is not None:
+            return shown
+        self._move_verified, self._move_error = self._move_result()
+        return self.async_show_progress_done(next_step_id="move_vendor_done")
+
+    async def _do_move_vendor(self) -> bool:
+        """Remove the redirect and reboot. Returns whether Enertek's broker was
+        confirmed — it may simply be down, which is why people move away."""
+        from .control import BrokerConfig
+        from .local_broker import battery_answers
+
+        plan = self._move_plan
+        await plan["gateway"].remove_redirect()
+        await plan["gateway"].reboot()
+        v = plan["vendor"]
+        if not (v.get("host") and v.get("user") and v.get("pwd") and v.get("serial")):
+            return False
+        cfg = BrokerConfig(host=v["host"], port=int(v["port"]), username=v["user"],
+                           password=v["pwd"], serial=v["serial"])
+        return await battery_answers(self.hass, cfg, timeout=300)
+
+    async def async_step_move_vendor_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if self._move_error:
+            return self.async_abort(reason="move_failed",
+                                    description_placeholders={"error": self._move_error})
+        vendor = self._move_plan["vendor"]
+        if vendor.get("host"):
+            self._save_broker(vendor, local=False, vendor=None)
+        else:
+            opts = dict(self.config_entry.options)
+            opts[CONF_LOCAL_BROKER] = False
+            self.hass.config_entries.async_update_entry(self.config_entry, options=opts)
+        return self.async_abort(
+            reason="moved_vendor" if self._move_verified else "moved_vendor_unverified")

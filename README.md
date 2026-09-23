@@ -247,12 +247,28 @@ commands travel via Enertek's cloud, so they pause when that cloud is down.
 To make control **fully local**, run your own broker — the companion
 [**OpenHomepower MQTT Broker**](https://github.com/seanlewis/openhomepower-broker)
 is a ready-made, secure one (per-device credentials, isolated topics; installs as
-a Home Assistant add-on, Docker, or native). Point the broker host in these
-options at it, and repoint the gateway daemon to it. The broker host is the only
-switch here — nothing else in the integration changes, and monitoring stays local
-regardless. Repointing the gateway is a single, reversible **network redirect**
-rule on the gateway, not a firmware flash; the broker repo has the exact commands
-and a one-line rollback.
+a Home Assistant add-on, Docker, or native).
+
+**One click (Home Assistant OS / Supervised):**
+
+1. Install the **OpenHomepower Secure Broker** add-on (see its repo). You don't
+   need to configure it.
+2. **Settings → Devices & Services → OpenHomepower → Configure → Move to local
+   broker.** Check the two addresses and submit.
+
+Home Assistant then configures the add-on, adds one reversible redirect rule on
+the battery's gateway, reboots the gateway and checks the battery has connected.
+It takes up to 6 minutes. If the battery doesn't connect, the change is undone
+automatically. **Move back to Enertek's broker** in the same menu reverses it.
+
+Once moved, the Enertek app and portal stop showing your battery (it can only
+use one broker). Reserve Home Assistant's IP address in your router, because the
+battery is pointed at it.
+
+**Manual steps (backup):** if the button can't be used (Docker/Core installs,
+or it reports a problem), the broker repo has the same steps to do by hand,
+including a two-line undo. Both routes use the same rule, so either can undo
+the other.
 
 > ⚠️ Control writes real settings to a lithium battery: the reserve limits set a
 > discharge floor and the schedule governs charge/discharge. Set them

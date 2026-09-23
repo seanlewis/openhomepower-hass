@@ -1,6 +1,10 @@
 {
   "domain": "openhomepower",
   "name": "OpenHomepower",
+  "after_dependencies": [
+    "hassio",
+    "network"
+  ],
   "codeowners": [
     "@seanlewis"
   ],
@@ -12,5 +16,5 @@
   "requirements": [
     "asyncssh>=2.14,<2.24"
   ],
-  "version": "0.6.0"
+  "version": "0.7.0"
 }

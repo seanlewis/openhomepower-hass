@@ -254,6 +254,14 @@ class MqttControl:
             raise ConnectionError(f"MQTT CONNACK failed: {ca!r}")
         return s
 
+    def check_login(self) -> None:
+        """Connect and disconnect; raises if the broker refuses the login."""
+        s = self._connect()
+        try:
+            s.send(b"\xe0\x00")                  # DISCONNECT
+        finally:
+            s.close()
+
     def publish(self, frame: bytes) -> None:
         s = self._connect()
         try:

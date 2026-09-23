@@ -34,6 +34,14 @@
   "options": {
     "step": {
       "init": {
+        "title": "OpenHomepower",
+        "menu_options": {
+          "settings": "Settings",
+          "move_local": "Move to local broker (stop using Enertek's cloud)",
+          "move_vendor": "Move back to Enertek's broker"
+        }
+      },
+      "settings": {
         "title": "OpenHomepower options",
         "description": "Telemetry source can be switched here (SSH log or MQTT broker) without losing your entities. MQTT reuses the broker fields below.\n\nMonitoring polls no faster than the battery refreshes (15-20s at best).\n\nControl is optional and off by default. Turning it on lets Home Assistant WRITE settings to the battery via the broker below — the vendor broker to start with; point it at your own local broker later and nothing else changes. The topic serial is filled in automatically where possible.",
         "data": {
@@ -47,11 +55,42 @@
           "broker_password": "Control broker password",
           "topic_serial": "MQTT topic serial"
         }
+      },
+      "move_local": {
+        "title": "Move to your local broker",
+        "description": "This moves your battery's connection from Enertek's cloud to the OpenHomepower Secure Broker add-on, so monitoring and control keep working when Enertek's servers are down.\n\n**Before you continue:**\n- Install the OpenHomepower Secure Broker add-on (it doesn't need configuring; this sets it up).\n- The Enertek app and portal will **stop showing your battery**. You can move back at any time from this menu.\n- The battery's gateway **reboots** (the battery keeps running). The whole move takes up to 6 minutes; if the battery doesn't connect, the change is undone automatically.\n- Reserve Home Assistant's address in your router: the battery is pointed at it.\n\n{error}",
+        "data": {
+          "host": "Battery address",
+          "ha_ip": "Home Assistant address (as the battery should reach it)"
+        }
+      },
+      "move_vendor": {
+        "title": "Move back to Enertek's broker",
+        "description": "This removes the redirect from your battery's gateway and reboots it, so the battery reconnects to Enertek's cloud. The Enertek app and portal will work again, and Home Assistant's control will depend on Enertek's servers.\n\nThe broker add-on is left installed; you can stop or remove it afterwards.\n\n{error}",
+        "data": {
+          "host": "Battery address"
+        }
+      },
+      "move_local_run": {
+        "title": "Moving your battery"
+      },
+      "move_vendor_run": {
+        "title": "Moving your battery"
       }
     },
     "error": {
       "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial.",
-      "host_required": "Enter the battery's address for the SSH source."
+      "host_required": "Enter the battery's address for the SSH source.",
+      "move_check_failed": "{error}"
+    },
+    "progress": {
+      "moving": "Moving your battery. Its gateway reboots during this, and it can take up to 6 minutes. Please keep this window open."
+    },
+    "abort": {
+      "move_failed": "The move didn't complete: {error}",
+      "moved_local": "Done. Your battery is now connected to your local broker, and Home Assistant has been switched to it.",
+      "moved_vendor": "Done. Your battery is back on Enertek's broker, and Home Assistant has been switched back.",
+      "moved_vendor_unverified": "The redirect has been removed and Home Assistant switched back, but Enertek's broker didn't answer, so this couldn't be confirmed. Enertek's servers may be down; the battery reconnects when they're back."
     }
   },
   "entity": {
