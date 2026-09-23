@@ -553,6 +553,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         try:
             return task.result(), None
         except MoveError as err:
+            _LOGGER.warning("moving the battery failed: %s", err)
             return None, str(err)
         except Exception as err:  # noqa: BLE001 - surface anything else too
             _LOGGER.exception("moving the battery failed")
@@ -584,6 +585,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             })
         self.hass.config_entries.async_update_entry(
             self.config_entry, data=data, options=opts)
+        _LOGGER.info("integration now uses the broker at %s:%s (%s)", broker["host"],
+                     broker["port"], "local" if local else "Enertek")
 
     # -- to the local broker --
 
@@ -621,6 +624,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             addon_opts, client_pw = merge_addon_options(
                 await addon.options(), serial, device["user"], device["pwd"])
         except MoveError as err:
+            _LOGGER.warning("move to local broker: pre-check failed, nothing changed: %s", err)
             return self._move_form("move_local", {"base": "move_check_failed"},
                                    str(err), ha_ip)
 
@@ -667,6 +671,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                            username=local["user"], password=local["pwd"],
                            serial=local["serial"])
 
+        _LOGGER.info("move to local broker: starting (battery %s, serial %s, broker %s:%s)",
+                     gateway.login.host, local["serial"], local["host"], local["port"])
         await plan["addon"].apply(plan["addon_opts"])
         if not await broker_accepts(self.hass, cfg, BROKER_READY_TIMEOUT):
             raise MoveError("The broker add-on didn't accept Home Assistant's login after "
@@ -682,15 +688,19 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                 pass
             raise
         await gateway.reboot()
+        _LOGGER.info("move to local broker: waiting for the battery to connect")
         if await battery_answers(self.hass, cfg):
+            _LOGGER.info("move to local broker: done")
             return
 
-        _LOGGER.warning("battery didn't reach the local broker; rolling back")
+        _LOGGER.warning("move to local broker: battery didn't connect; rolling back")
         try:
             await gateway.wait_until_back()
             await gateway.remove_redirect()
             await gateway.reboot()
         except MoveError as err:
+            _LOGGER.error("move to local broker: rollback failed, the redirect may still "
+                          "be on the gateway: %s", err)
             raise MoveError(
                 "The battery didn't connect to the local broker, and undoing the change "
                 f"also failed ({err}). Use the manual Undo steps in the broker add-on's "
@@ -741,6 +751,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             vendor.setdefault("serial", "")
             vendor["serial"] = vendor["serial"] or str(opts.get(CONF_TOPIC_SERIAL, ""))
         except MoveError as err:
+            _LOGGER.warning("move back to Enertek: pre-check failed, nothing changed: %s", err)
             return self._move_form("move_vendor", {"base": "move_check_failed"},
                                    str(err), None)
         self._move_plan = {"gateway": gateway, "vendor": vendor}
@@ -762,10 +773,13 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         from .local_broker import battery_answers
 
         plan = self._move_plan
+        _LOGGER.info("move back to Enertek: starting (battery %s)", plan["gateway"].login.host)
         await plan["gateway"].remove_redirect()
         await plan["gateway"].reboot()
         v = plan["vendor"]
         if not (v.get("host") and v.get("user") and v.get("pwd") and v.get("serial")):
+            _LOGGER.warning("move back to Enertek: no saved Enertek broker settings to "
+                            "check against; skipping the check")
             return False
         cfg = BrokerConfig(host=v["host"], port=int(v["port"]), username=v["user"],
                            password=v["pwd"], serial=v["serial"])

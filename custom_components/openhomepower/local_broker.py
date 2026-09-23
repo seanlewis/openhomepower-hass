@@ -23,11 +23,14 @@ import hashlib
 import ipaddress
 import logging
 import secrets
+import socket
+import struct
 import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .control import REG_MODE, BrokerConfig, MqttControl
+from . import control
+from .control import REG_MODE, BrokerConfig, MqttControl, frame03, mqtt_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -176,42 +179,62 @@ class GatewayAdmin:
                 known_hosts=None, client_keys=None,
             ) as conn:
                 result = await asyncio.wait_for(conn.run(command), timeout)
-                return (result.stdout or "").strip()
+                out = (result.stdout or "").strip()
+                if result.stderr:
+                    _LOGGER.debug("gateway %s stderr: %s", self.login.host,
+                                  result.stderr.strip())
+                return out
         except asyncssh.PermissionDenied as exc:
+            _LOGGER.warning("gateway %s rejected the SSH login for %s",
+                            self.login.host, self.login.username)
             raise MoveError("The battery rejected the SSH login.") from exc
         except (OSError, asyncssh.Error, asyncio.TimeoutError) as exc:
+            _LOGGER.debug("gateway %s: SSH failed: %r", self.login.host, exc)
             raise MoveError(f"Couldn't connect to the battery at {self.login.host} "
                             f"over SSH ({exc}).") from exc
 
     async def check_include(self) -> None:
-        if await self.run(INCLUDE_CHECK) != "yes":
+        included = await self.run(INCLUDE_CHECK)
+        _LOGGER.debug("gateway %s: firewall.user included at boot: %s",
+                      self.login.host, included)
+        if included != "yes":
             raise MoveError("This battery's firewall doesn't load /etc/firewall.user at "
                             "boot, so the redirect wouldn't survive a restart. Use the "
                             "manual instructions instead.")
 
     async def apply_redirect(self, ip: str, port: int) -> None:
         out = await self.run(apply_script(redirect_rule(ip, port)))
+        _LOGGER.info("gateway %s: redirect to %s:%s written (%s rule line)",
+                     self.login.host, ip, port, out or "no")
         if out.splitlines()[-1:] != ["1"]:
             raise MoveError(f"Writing the redirect rule didn't take effect ({out!r}).")
 
     async def remove_redirect(self) -> None:
         out = await self.run(remove_script())
+        _LOGGER.info("gateway %s: redirect removed (%s rule lines left)",
+                     self.login.host, out or "0")
         if out.splitlines()[-1:] not in (["0"], []):
             raise MoveError(f"Removing the redirect rule didn't take effect ({out!r}).")
 
     async def reboot(self) -> None:
+        _LOGGER.info("gateway %s: rebooting", self.login.host)
         await self.run(REBOOT)
 
     async def wait_until_back(self, timeout: float = GATEWAY_BACK_TIMEOUT) -> None:
         """After a reboot: wait for SSH to answer again."""
         await asyncio.sleep(30)                 # it takes at least this long to go down and up
-        end = time.monotonic() + timeout
+        start = time.monotonic()
+        end = start + timeout
         while True:
             try:
                 await self.run("true", timeout=10)
+                _LOGGER.info("gateway %s: back after reboot (%.0fs)", self.login.host,
+                             30 + time.monotonic() - start)
                 return
             except MoveError:
                 if time.monotonic() > end:
+                    _LOGGER.warning("gateway %s: not reachable %.0fs after reboot",
+                                    self.login.host, 30 + timeout)
                     raise
                 await asyncio.sleep(10)
 
@@ -226,26 +249,83 @@ async def broker_accepts(hass, cfg: BrokerConfig, timeout: float) -> bool:
         try:
             await hass.async_add_executor_job(MqttControl(probe).check_login)
             return True
-        except (OSError, ConnectionError):
+        except (OSError, ConnectionError) as err:
             if time.monotonic() > end:
+                _LOGGER.warning("broker at %s:%s didn't accept the login for %s: %s",
+                                cfg.host, cfg.port, cfg.username, err)
                 return False
             await asyncio.sleep(3)
 
 
-async def battery_answers(hass, cfg: BrokerConfig, timeout: float = VERIFY_TIMEOUT) -> bool:
-    """Poll until the battery answers a read through `cfg`'s broker.
+def probe_battery(cfg: BrokerConfig, window: float) -> str | None:
+    """Listen on `cfg`'s broker for any sign of the battery. Blocking.
 
-    A reply can only come from the battery itself, so this is proof it's on
-    that broker — the same check used when this was first done by hand.
+    Subscribes to everything under the battery's serial and asks for data two
+    ways — a settings read and a read-all — because units differ in which they
+    answer. Anything the battery publishes (a reply to either, or an unprompted
+    push) proves it is on this broker; only our own requests, on `/Input`
+    topics, are ignored. Returns the topic that answered, or None. Raises
+    OSError/ConnectionError if the broker itself can't be reached.
     """
+    base = f"Enertek/{cfg.serial}"
+    s = MqttControl(cfg)._connect()
+    try:
+        sub = struct.pack("!H", 1) + control._ms(f"{base}/#".encode()) + bytes([0])
+        s.send(bytes([0x82]) + control._rlen(len(sub)) + sub)
+        requests = [
+            (f"{base}/DataTransmission/Input", mqtt_payload(frame03(REG_MODE, 1), seq=2)),
+            (f"{base}/Read_All_Input_Registers/Input", bytes([0x31, 0x02]) + b"\xff\xff"),
+        ]
+        buf = b""
+        end = time.monotonic() + window
+        next_request = 0.0
+        while time.monotonic() < end:
+            if time.monotonic() >= next_request:
+                for topic, payload in requests:
+                    pub = control._ms(topic.encode()) + payload
+                    s.send(bytes([0x30]) + control._rlen(len(pub)) + pub)
+                next_request = time.monotonic() + 20
+            try:
+                data = s.recv(4096)
+            except socket.timeout:
+                continue
+            if not data:
+                raise ConnectionError("broker closed the connection")
+            buf += data
+            while True:
+                topic, payload, buf = control._next_publish(buf)
+                if topic is None:
+                    break
+                _LOGGER.debug("move check: %s (%d bytes)", topic, len(payload))
+                if not topic.endswith("/Input"):
+                    return topic
+        return None
+    finally:
+        s.close()
+
+
+async def battery_answers(hass, cfg: BrokerConfig, timeout: float = VERIFY_TIMEOUT) -> bool:
+    """Poll until the battery shows up on `cfg`'s broker (see probe_battery)."""
     probe = replace(cfg, client_id=f"openhomepower-ha-move-{cfg.serial}")
-    end = time.monotonic() + timeout
+    start = time.monotonic()
+    end = start + timeout
+    last_problem = "no message from the battery yet"
     while time.monotonic() < end:
+        window = max(5.0, min(30.0, end - time.monotonic()))
         try:
-            await hass.async_add_executor_job(MqttControl(probe).read, REG_MODE, 1, 15)
-            return True
-        except (OSError, ConnectionError, TimeoutError):
+            topic = await hass.async_add_executor_job(probe_battery, probe, window)
+        except (OSError, ConnectionError) as err:
+            last_problem = f"couldn't use the broker at {cfg.host}:{cfg.port}: {err}"
+            _LOGGER.debug("move check: %s", last_problem)
             await asyncio.sleep(VERIFY_INTERVAL)
+            continue
+        if topic:
+            _LOGGER.info("battery %s answered on %s:%s (%s) after %.0fs",
+                         cfg.serial, cfg.host, cfg.port, topic, time.monotonic() - start)
+            return True
+        last_problem = "the broker was reachable but the battery sent nothing"
+    _LOGGER.warning("battery %s didn't appear on %s:%s within %.0fs (%s)",
+                    cfg.serial, cfg.host, cfg.port, timeout, last_problem)
     return False
 
 
@@ -274,13 +354,18 @@ class BrokerAddon:
             installed = list((get_addons_info(hass) or {}).keys())
         except Exception:  # noqa: BLE001 - not ready yet; fall back to known slugs
             installed = []
-        for slug in addon_slug_candidates(installed):
+        candidates = addon_slug_candidates(installed)
+        _LOGGER.debug("looking for the broker add-on as: %s", candidates)
+        for slug in candidates:
             manager = AddonManager(hass, _LOGGER, "OpenHomepower Secure Broker", slug)
             try:
                 info = await manager.async_get_addon_info()
-            except Exception:  # noqa: BLE001 - unknown slug on this Supervisor
+            except Exception as err:  # noqa: BLE001 - unknown slug on this Supervisor
+                _LOGGER.debug("add-on slug %s: %r", slug, err)
                 continue
             if info.state is not AddonState.NOT_INSTALLED:
+                _LOGGER.info("found the broker add-on: %s (version %s, %s)",
+                             slug, info.version, info.state.value)
                 return cls(hass, manager)
         raise MoveError("The OpenHomepower Secure Broker add-on isn't installed. Install "
                         "it first (see the integration's README), then try again.")
@@ -295,11 +380,15 @@ class BrokerAddon:
         try:
             await self._manager.async_set_addon_options(options)
             info = await self._manager.async_get_addon_info()
+            _LOGGER.info("broker add-on options saved (%d device(s)); %s it",
+                         len(options.get("devices") or []),
+                         "restarting" if info.state is AddonState.RUNNING else "starting")
             if info.state is AddonState.RUNNING:
                 await self._manager.async_restart_addon()
             else:
                 await self._manager.async_start_addon()
         except Exception as exc:  # noqa: BLE001 - AddonError and friends
+            _LOGGER.warning("configuring the broker add-on failed: %r", exc)
             raise MoveError(f"Couldn't configure the broker add-on ({exc}).") from exc
 
 
