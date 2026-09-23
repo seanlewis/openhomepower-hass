@@ -86,38 +86,94 @@ repository** (a one-time step):
    latest version offered).
 6. Restart Home Assistant: **Settings → System → ⋮ → Restart Home Assistant**.
 
-### 3. Set up the integration
+### 3. Check Home Assistant can reach the battery
+
+Setup talks to the battery **directly over your network**, so Home Assistant and
+the battery must be able to reach each other. This is the most common reason
+setup fails.
+
+- **Same network.** The battery must be on the same network as Home Assistant —
+  **not a guest Wi-Fi**. Guest networks block devices on them from being reached
+  from your main network.
+- **Quick test.** On a computer connected to the *same network as Home
+  Assistant*, open `http://<battery IP>` in a browser. You should see an
+  **Energizer Homepower** sign-on page. If you can't, Home Assistant can't reach
+  it either — fix this before continuing.
+- **Finding the IP.** In your router's device list, look for the hostname
+  **Homepower**. Some routers mislabel it (UniFi, for example, shows it as a
+  "Philips SmartTV"). Reserving that IP in your router stops it changing later.
+
+<details>
+<summary>Battery on the wrong network? Moving it to your main Wi-Fi</summary>
+
+From a device on the network the battery is currently on, open its sign-on
+page, log in with the manufacturer defaults (`homepower` / `123456`), and change
+its Wi-Fi to your main network.
+
+- The battery supports **2.4 GHz only** — your main network needs a 2.4 GHz band.
+- Double-check the Wi-Fi password before saving. If it's wrong, the battery drops
+  off the network. To recover, join the Wi-Fi network the battery broadcasts
+  itself and open `http://10.9.8.1`.
+
+If you'd rather keep the battery isolated, add a router firewall rule allowing
+**only your Home Assistant machine** to reach the battery's IP on TCP ports
+**80** and **34522**. How to do this depends on your router.
+
+</details>
+
+### 4. Set up the integration
 
 1. **Settings → Devices & Services → + Add Integration**, then search
    **OpenHomepower**.
-2. It tries to find your battery automatically — it looks for the DHCP hostname
-   `Homepower`. If found, the address is pre-filled; otherwise enter the
-   battery's IP address.
+2. It tries to find your battery automatically. If it does, the address and the
+   MQTT broker details are pre-filled for you. If the form says **"none found
+   automatically"**, go back to [step 3](#3-check-home-assistant-can-reach-the-battery)
+   — this almost always means Home Assistant can't reach the battery.
 3. The username and password are pre-filled with the **manufacturer's own
    published defaults** (from Enertek's Wi-Fi setup guide) and work on
-   unmodified units — just continue.
-4. Choose your **telemetry source** — SSH (default) or MQTT. See below.
-5. Finish. Your battery's sensors appear within a few seconds.
+   unmodified units — leave them as they are.
+4. Leave the **telemetry source** on **Automatic (recommended)**. See below.
+5. Submit. Your battery's sensors appear within a few seconds.
 
-### Telemetry source: SSH or MQTT
+### Telemetry source
 
-New installs default to **MQTT** — it works on every unit (including gateway
-builds whose daemon doesn't log to disk) and needs no SSH at all: telemetry,
-control writes, and control read-back all run over your broker. Pick **MQTT** and
-enter the broker host, credentials, and topic serial; you don't need the
-battery's SSH address.
+**Leave it on Automatic.** It reads the battery directly over your network (SSH)
+and, if your unit doesn't support that, switches to MQTT for you. Either way you
+get exactly the same sensors, Energy Dashboard data and control entities.
 
-**SSH** remains available as an independent option for units you'd rather read
-over the local log with no broker — select it and enter the battery's address.
-Everything downstream — sensors, the Energy Dashboard, and the control entities —
-is identical either way.
+The two underlying sources, if you want to pick one yourself:
+
+| | **SSH log** | **MQTT broker** |
+| --- | --- | --- |
+| Works on | Most units — some gateway builds don't write the log it reads | Every unit |
+| Reads from | The battery itself, on your network | The MQTT broker your battery reports to (Enertek's cloud, unless you [run your own](#the-broker-and-cutting-the-cord)) |
+| Needs Enertek's cloud? | No | Yes, unless you run your own broker |
+| Setup | Just the battery's IP address | Broker details, pre-filled **when auto-discovery finds the battery** |
+
+Automatic tries SSH first because it's fully local, and only uses MQTT when SSH
+connects but finds no readings. It records whichever source it chose. You can
+switch later without losing your entities or history:
+**Settings → Devices & Services → OpenHomepower → Configure**.
+
+### Troubleshooting setup
+
+| What you see | What it usually means |
+| --- | --- |
+| "none found automatically" | Home Assistant can't reach the battery (guest network, different VLAN, or Home Assistant in Docker without host networking). See [step 3](#3-check-home-assistant-can-reach-the-battery). |
+| "Could not reach the battery" | Same as above, or a wrong IP. The gateway also drops off Wi-Fi briefly now and then — try again once. |
+| "MQTT source needs the broker host…" | MQTT is selected but auto-discovery didn't fill in the broker details. Fix discovery, or switch to Automatic. |
+| "Connected, but no telemetry could be decoded" | With SSH log selected: your unit doesn't write the log SSH reads — switch to Automatic. With Automatic: MQTT didn't answer either; include the log line in an issue. |
+| "The username or password was rejected" | The battery's login was changed from the defaults. Enter the current one. |
+
+Still stuck? **Settings → System → Logs**, search for `openhomepower`, and include
+that line when you [open an issue](https://github.com/seanlewis/openhomepower-hass/issues).
 
 <details>
 <summary><b>Prefer not to use HACS? Manual install</b></summary>
 
 Copy the `custom_components/openhomepower` folder from this repository into your
 Home Assistant `config/custom_components/` directory, restart Home Assistant,
-then do **step 3** above. The trade-off: HACS won't notify you of updates, so
+then do **steps 3 and 4** above. The trade-off: HACS won't notify you of updates, so
 you'd repeat this by hand for each new version.
 
 </details>
@@ -194,8 +250,8 @@ is a ready-made, secure one (per-device credentials, isolated topics; installs a
 a Home Assistant add-on, Docker, or native). Point the broker host in these
 options at it, and repoint the gateway daemon to it. The broker host is the only
 switch here — nothing else in the integration changes, and monitoring stays local
-regardless. Repointing the gateway is a **config change** (one `uci set
-we2.mqtt.host=…`), not a firmware flash; the broker repo has the exact commands
+regardless. Repointing the gateway is a single, reversible **network redirect**
+rule on the gateway, not a firmware flash; the broker repo has the exact commands
 and a one-line rollback.
 
 > ⚠️ Control writes real settings to a lithium battery: the reserve limits set a

@@ -36,6 +36,7 @@ from .const import (
     DEFAULT_READ_SOURCE,
     DOMAIN,
     MIN_POLL_SECONDS,
+    READ_SOURCE_AUTO,
     READ_SOURCE_MQTT,
     READ_SOURCE_SSH,
 )
@@ -90,6 +91,23 @@ async def _ssh_derive_broker(host: str, port: int,
     return out
 
 
+def _fill_broker_fields(user_input: dict[str, Any], derived: dict) -> dict[str, Any]:
+    """Copy of the form input with blank broker fields taken from `derived`.
+
+    Anything the user typed wins; `derived` is `_ssh_derive_broker()` output.
+    """
+    out = dict(user_input)
+    # The port belongs with the host: if the host came from the device, so
+    # does the port (the form's port field just holds the default then).
+    if not str(out.get(CONF_BROKER_HOST, "")).strip() and derived.get("host"):
+        out[CONF_BROKER_PORT] = derived.get("port", DEFAULT_BROKER_PORT)
+    for conf, key in ((CONF_BROKER_HOST, "host"), (CONF_BROKER_USER, "user"),
+                      (CONF_BROKER_PASSWORD, "pwd"), (CONF_TOPIC_SERIAL, "serial")):
+        if not str(out.get(conf, "")).strip() and derived.get(key):
+            out[conf] = derived[key]
+    return out
+
+
 class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenHomepower."""
 
@@ -112,51 +130,36 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                 if error:
                     errors["base"] = error
                 else:
-                    await self.async_set_unique_id(
-                        serial or user_input[CONF_TOPIC_SERIAL].strip())
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title="Energizer Homepower",
-                        data={
-                            CONF_READ_SOURCE: READ_SOURCE_MQTT,
-                            CONF_BROKER_HOST: user_input[CONF_BROKER_HOST].strip(),
-                            CONF_BROKER_PORT: user_input.get(
-                                CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
-                            CONF_BROKER_USER: user_input[CONF_BROKER_USER].strip(),
-                            CONF_BROKER_PASSWORD: user_input[CONF_BROKER_PASSWORD],
-                            CONF_TOPIC_SERIAL: user_input[CONF_TOPIC_SERIAL].strip(),
-                        },
-                    )
+                    return await self._async_create_mqtt_entry(serial, user_input)
+            elif not host:
+                errors["base"] = "host_required"
             else:
-                if not host:
-                    errors["base"] = "host_required"
-                else:
-                    creds = Credentials(
-                        host=host,
-                        port=user_input.get(CONF_PORT, DEFAULT_PORT),
-                        username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
-                        password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
-                    )
-                    serial, error = await self._async_probe(creds)
-                    if error:
-                        errors["base"] = error
-                    else:
-                        # Serial keeps a second setup of the same battery from
-                        # duplicating every entity.
-                        await self.async_set_unique_id(serial or host)
-                        self._abort_if_unique_id_configured()
-                        return self.async_create_entry(
-                            title="Energizer Homepower",
-                            data={
-                                CONF_READ_SOURCE: READ_SOURCE_SSH,
-                                CONF_HOST: host,
-                                CONF_PORT: creds.port,
-                                CONF_USERNAME: creds.username,
-                                CONF_PASSWORD: creds.password,
-                                CONF_POLL_SECONDS: user_input.get(
-                                    CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS),
-                            },
-                        )
+                creds = Credentials(
+                    host=host,
+                    port=user_input.get(CONF_PORT, DEFAULT_PORT),
+                    username=user_input.get(CONF_USERNAME, DEFAULT_USERNAME),
+                    password=user_input.get(CONF_PASSWORD, DEFAULT_PASSWORD),
+                )
+                serial, error = await self._async_probe(creds)
+                if not error:
+                    return await self._async_create_ssh_entry(
+                        serial, creds, user_input)
+                if source == READ_SOURCE_AUTO and error == "no_data":
+                    # SSH works but this unit's daemon doesn't log frames to
+                    # disk, so fall back to MQTT — which every unit speaks —
+                    # filling any blank broker field from the device we just
+                    # reached. Other SSH errors mean the device itself wasn't
+                    # reachable, so MQTT can't be derived either.
+                    _LOGGER.info(
+                        "no telemetry in the gateway log at %s; trying MQTT", host)
+                    derived = await _ssh_derive_broker(
+                        host, creds.port, creds.username, creds.password)
+                    mqtt_input = _fill_broker_fields(user_input, derived)
+                    serial, error = await self._async_probe_mqtt(mqtt_input)
+                    if not error:
+                        return await self._async_create_mqtt_entry(
+                            serial, mqtt_input)
+                errors["base"] = error
             suggested_host = host
             # Preserve what was typed across an error re-render.
             broker = {
@@ -194,8 +197,10 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                 SelectSelectorConfig(
                     mode=SelectSelectorMode.DROPDOWN,
                     options=[
+                        SelectOptionDict(value=READ_SOURCE_AUTO,
+                                         label="Automatic (recommended)"),
                         SelectOptionDict(value=READ_SOURCE_SSH, label="SSH log"),
-                        SelectOptionDict(value=READ_SOURCE_MQTT, label="MQTT broker (default)"),
+                        SelectOptionDict(value=READ_SOURCE_MQTT, label="MQTT broker"),
                     ],
                 )
             ),
@@ -213,6 +218,45 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "found": ", ".join(self._discovered) if self._discovered
                 else "none found automatically",
+            },
+        )
+
+    async def _async_create_ssh_entry(
+        self, serial: str | None, creds: Credentials, user_input: dict[str, Any]
+    ) -> ConfigFlowResult:
+        # Serial keeps a second setup of the same battery from duplicating
+        # every entity.
+        await self.async_set_unique_id(serial or creds.host)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Energizer Homepower",
+            data={
+                CONF_READ_SOURCE: READ_SOURCE_SSH,
+                CONF_HOST: creds.host,
+                CONF_PORT: creds.port,
+                CONF_USERNAME: creds.username,
+                CONF_PASSWORD: creds.password,
+                CONF_POLL_SECONDS: user_input.get(
+                    CONF_POLL_SECONDS, DEFAULT_POLL_SECONDS),
+            },
+        )
+
+    async def _async_create_mqtt_entry(
+        self, serial: str | None, user_input: dict[str, Any]
+    ) -> ConfigFlowResult:
+        await self.async_set_unique_id(
+            serial or user_input[CONF_TOPIC_SERIAL].strip())
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Energizer Homepower",
+            data={
+                CONF_READ_SOURCE: READ_SOURCE_MQTT,
+                CONF_BROKER_HOST: user_input[CONF_BROKER_HOST].strip(),
+                CONF_BROKER_PORT: user_input.get(
+                    CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
+                CONF_BROKER_USER: user_input[CONF_BROKER_USER].strip(),
+                CONF_BROKER_PASSWORD: user_input[CONF_BROKER_PASSWORD],
+                CONF_TOPIC_SERIAL: user_input[CONF_TOPIC_SERIAL].strip(),
             },
         )
 

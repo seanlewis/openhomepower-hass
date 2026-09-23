@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to your Homepower",
-        "description": "Enter your battery's address. Auto-discovery found: {found}\n\nThe defaults below are the manufacturer's own published values and work on unmodified units. For the MQTT source, the broker host, credentials and topic serial are read from the battery automatically where possible.",
+        "description": "Enter your battery's address. Auto-discovery found: {found}\n\nIf nothing was found, Home Assistant probably can't reach the battery. It must be on the same network as Home Assistant, not a guest Wi-Fi. To check, type the battery's IP address into a browser on a device on Home Assistant's network. You should see an Energizer Homepower page.\n\nThe defaults below are the manufacturer's own published values and work on unmodified units. Leave the telemetry source on Automatic unless you have a reason not to: it reads the battery directly over your network, and switches to MQTT for units that need it. For the MQTT source, the broker host, credentials and topic serial are read from the battery automatically where possible.",
         "data": {
           "host": "IP address or hostname",
           "port": "SSH port",
@@ -20,12 +20,12 @@
       }
     },
     "error": {
-      "cannot_connect": "Could not reach the battery. Check the address, and note the gateway briefly drops off WiFi from time to time — try again.",
+      "cannot_connect": "Could not reach the battery. Check the address and that the battery is on the same network as Home Assistant (not a guest Wi-Fi). The gateway also drops off Wi-Fi briefly from time to time, so try again once.",
       "invalid_auth": "The username or password was rejected.",
-      "no_data": "Connected, but no telemetry could be decoded. Is the vendor daemon running?",
+      "no_data": "Connected, but no telemetry could be decoded. Try the Automatic source, which switches to MQTT for units like this.",
       "unknown": "Unexpected error. Check the Home Assistant log.",
-      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial.",
-      "host_required": "Enter the battery's address for the SSH source."
+      "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial. These fill in automatically when auto-discovery finds the battery. If it didn't, check Home Assistant can reach the battery, or switch to the SSH log source.",
+      "host_required": "Enter the battery's address."
     },
     "abort": {
       "already_configured": "This battery is already set up."
