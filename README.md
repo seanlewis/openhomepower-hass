@@ -15,15 +15,17 @@ suspend its listings. Owners also report the vendor's cloud being **unreliable
 and offline for extended periods — reportedly weeks at a time** — during which
 they could neither see their data nor change any battery settings.
 
-This integration talks to the battery **directly on your own network**, with no
-vendor cloud in the path at all, and gives you back:
+This integration talks to the battery **directly on your own network** and gives
+you back:
 
 - State of charge, pack voltage, battery power
 - Solar generation, grid import/export, household load
 - **Daily energy counters that feed the Energy Dashboard**
 
-Because nothing here depends on Enertek's servers, it keeps working when their
-cloud does not.
+On most units monitoring needs no vendor cloud at all, so it keeps working when
+Enertek's does not. Units that can only report over MQTT, and control on every
+unit, go through Enertek's broker until you
+[move to your own](#the-broker-and-cutting-the-cord) — a one-click step.
 
 Beyond monitoring, it can optionally **control** the battery too — application
 mode, reserve limits, and a full weekly charge/discharge schedule. Control is
@@ -153,7 +155,13 @@ The two underlying sources, if you want to pick one yourself:
 Automatic tries SSH first because it's fully local, and only uses MQTT when SSH
 connects but finds no readings. It records whichever source it chose. You can
 switch later without losing your entities or history:
-**Settings → Devices & Services → OpenHomepower → Configure**.
+**Settings → Devices & Services → OpenHomepower → Configure** (then **Settings**,
+if a menu appears).
+
+> On Home Assistant OS / Supervised, **Configure** opens a short menu:
+> **Settings** (everything on this page) and **Move to local broker** (see
+> [below](#the-broker-and-cutting-the-cord)). Other installs go straight to the
+> settings.
 
 ### Troubleshooting setup
 
@@ -211,7 +219,8 @@ how confident we are in it — is in
 
 By default this integration only **monitors**. If you want Home Assistant to
 *change* battery settings, enable **control** in the integration's options
-(**Settings → Devices & Services → OpenHomepower → Configure → Enable control**).
+(**Settings → Devices & Services → OpenHomepower → Configure → Settings → Enable
+control**).
 Control adds:
 
 - **Application mode** (Automatic / Semi-automatic / Manual) — a `select`
@@ -251,8 +260,10 @@ a Home Assistant add-on, Docker, or native).
 
 **One click (Home Assistant OS / Supervised):**
 
-1. Install the **OpenHomepower Secure Broker** add-on (see its repo). You don't
-   need to configure it.
+1. Install the [**OpenHomepower Secure Broker**](https://github.com/seanlewis/openhomepower-broker)
+   add-on, **version 0.2.2 or later** (Settings → Add-ons → Add-on Store → ⋮ →
+   Repositories, add `https://github.com/seanlewis/openhomepower-broker`). You
+   don't need to configure it — the move does that.
 2. **Settings → Devices & Services → OpenHomepower → Configure → Move to local
    broker.** Check the two addresses and submit.
 
@@ -260,6 +271,8 @@ Home Assistant then configures the add-on, adds one reversible redirect rule on
 the battery's gateway, reboots the gateway and checks the battery has connected.
 It takes up to 6 minutes. If the battery doesn't connect, the change is undone
 automatically. **Move back to Enertek's broker** in the same menu reverses it.
+If a step fails, the message says which one; **Settings → System → Logs**
+(search `openhomepower`) has the detail.
 
 Once moved, the Enertek app and portal stop showing your battery (it can only
 use one broker). Reserve Home Assistant's IP address in your router, because the

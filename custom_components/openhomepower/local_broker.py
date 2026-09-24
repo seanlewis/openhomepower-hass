@@ -36,6 +36,8 @@ _LOGGER = logging.getLogger(__name__)
 
 ADDON_REPO = "https://github.com/seanlewis/openhomepower-broker"
 ADDON_SLUG = "openhomepower_broker"
+# 0.2.1 couldn't read its own password file and exited at start.
+MIN_ADDON_VERSION = (0, 2, 2)
 LOCAL_BROKER_PORT = 1885
 VENDOR_MQTT_PORT = 1884               # what the daemon dials; the rule matches on it
 
@@ -115,7 +117,7 @@ def merge_addon_options(options: dict[str, Any], serial: str, battery_user: str,
     off whichever battery uses it.
     """
     if "battery_login" not in options:
-        raise MoveError("The broker add-on is out of date. Update it (version 0.2.1 or "
+        raise MoveError("The broker add-on is out of date. Update it (version 0.2.2 or "
                         "later) and try again.")
     new = dict(options)
     devices = [dict(d) for d in new.get("devices") or []]
@@ -149,6 +151,16 @@ def merge_addon_options(options: dict[str, Any], serial: str, battery_user: str,
                         existing, battery_user)
     new["battery_login"] = {"username": battery_user, "password": battery_password}
     return new, client_password
+
+
+def addon_version_ok(version: str | None) -> bool:
+    """True if the installed add-on is new enough. Unknown versions pass (the
+    login check that follows still catches a broker that isn't running)."""
+    try:
+        parts = tuple(int(p) for p in str(version).split(".")[:3])
+    except ValueError:
+        return True
+    return parts >= MIN_ADDON_VERSION
 
 
 def addon_slug_candidates(installed_slugs: list[str]) -> list[str]:
@@ -379,6 +391,12 @@ class BrokerAddon:
             if info.state is not AddonState.NOT_INSTALLED:
                 _LOGGER.info("found the broker add-on: %s (version %s, %s)",
                              slug, info.version, info.state.value)
+                if not addon_version_ok(info.version):
+                    raise MoveError(
+                        f"The broker add-on is version {info.version}, which has a bug "
+                        "that stops it starting. Update it to 0.2.2 or later "
+                        "(Settings → Add-ons → OpenHomepower Secure Broker → Update), "
+                        "then try again.")
                 return cls(hass, manager)
         raise MoveError("The OpenHomepower Secure Broker add-on isn't installed. Install "
                         "it first (see the integration's README), then try again.")

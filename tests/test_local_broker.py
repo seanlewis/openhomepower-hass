@@ -8,7 +8,7 @@ import hashlib
 import pytest
 
 from openhomepower.local_broker import (
-    ADDON_REPO, MoveError, addon_slug_candidates, apply_script,
+    ADDON_REPO, MoveError, addon_slug_candidates, addon_version_ok, apply_script,
     merge_addon_options, redirect_rule, remove_script)
 
 
@@ -93,3 +93,12 @@ def test_slug_candidates_prefer_what_is_installed():
     got = addon_slug_candidates(["core_mosquitto", "abcd1234_openhomepower_broker"])
     assert got == ["abcd1234_openhomepower_broker",
                    f"{repo_hash}_openhomepower_broker", "local_openhomepower_broker"]
+
+
+@pytest.mark.parametrize("version,ok", [
+    ("0.2.1", False), ("0.2.0", False), ("0.1.2", False),
+    ("0.2.2", True), ("0.2.10", True), ("0.3.0", True), ("1.0", True),
+    (None, True), ("dev", True)])
+def test_addon_version_gate(version, ok):
+    # 0.2.1 exits at start; everything from 0.2.2 works
+    assert addon_version_ok(version) is ok
