@@ -58,7 +58,7 @@
       },
       "move_local": {
         "title": "Move to your local broker",
-        "description": "This moves your battery's connection from Enertek's cloud to the OpenHomepower Secure Broker add-on, so monitoring and control keep working when Enertek's servers are down.\n\n**Before you continue:**\n- Install the OpenHomepower Secure Broker add-on (it doesn't need configuring; this sets it up).\n- The Enertek app and portal will **stop showing your battery**. You can move back at any time from this menu.\n- The battery's gateway **reboots** (the battery keeps running). The whole move takes up to 6 minutes; if the battery doesn't connect, the change is undone automatically.\n- Reserve Home Assistant's address in your router: the battery is pointed at it.\n\n{error}",
+        "description": "This moves your battery's connection from Enertek's cloud to the OpenHomepower Secure Broker add-on, so monitoring and control keep working when Enertek's servers are down.\n\n**Before you continue:**\n- Install the OpenHomepower Secure Broker add-on (it doesn't need configuring; this sets it up).\n- The Enertek app and portal will **stop showing your battery**. You can move back at any time from this menu.\n- The battery's gateway **reboots** (the battery keeps running). The whole move takes up to 6 minutes; if the battery doesn't connect, the change is undone automatically.\n- Reserve Home Assistant's address in your router: the battery is pointed at it.",
         "data": {
           "host": "Battery address",
           "ha_ip": "Home Assistant address (as the battery should reach it)"
@@ -66,7 +66,7 @@
       },
       "move_vendor": {
         "title": "Move back to Enertek's broker",
-        "description": "This removes the redirect from your battery's gateway and reboots it, so the battery reconnects to Enertek's cloud. The Enertek app and portal will work again, and Home Assistant's control will depend on Enertek's servers.\n\nThe broker add-on is left installed; you can stop or remove it afterwards.\n\n{error}",
+        "description": "This removes the redirect from your battery's gateway and reboots it, so the battery reconnects to Enertek's cloud. The Enertek app and portal will work again, and Home Assistant's control will depend on Enertek's servers.\n\nThe broker add-on is left installed; you can stop or remove it afterwards.",
         "data": {
           "host": "Battery address"
         }

@@ -131,9 +131,22 @@ def merge_addon_options(options: dict[str, Any], serial: str, battery_user: str,
     new["devices"] = devices
 
     login = dict(new.get("battery_login") or {})
-    if login.get("username") and login["username"] != battery_user:
-        raise MoveError("The broker add-on already has a different battery login "
-                        "configured. Check its Configuration tab.")
+    existing = str(login.get("username") or "")
+    if existing and existing != battery_user:
+        # The add-on has one battery login for every battery it serves. Replacing
+        # it only matters if another battery is relying on it; with just this
+        # battery configured, the old value can't be in use (typically it was
+        # typed in by hand and is wrong), so replace it.
+        others = [d for d in devices if str(d.get("serial")) != serial]
+        if others:
+            raise MoveError(
+                f"The broker add-on's battery login is '{existing}', but this battery "
+                f"uses '{battery_user}', and the add-on is also set up for another "
+                "battery that may rely on the current one. Check the add-on's "
+                "Configuration tab.")
+        _LOGGER.warning("replacing the broker add-on's battery login '%s' with '%s' "
+                        "read from the battery (no other battery configured)",
+                        existing, battery_user)
     new["battery_login"] = {"username": battery_user, "password": battery_password}
     return new, client_password
 

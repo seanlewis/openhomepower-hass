@@ -65,11 +65,22 @@ def test_merge_keeps_an_existing_password_and_other_batteries():
     assert opts["devices"][1]["password"] == "mine"     # input not mutated
 
 
-def test_merge_refuses_a_different_battery_login():
-    with pytest.raises(MoveError):
+def test_merge_replaces_a_wrong_login_when_no_other_battery_uses_it():
+    # e.g. the SSH login typed into the add-on by hand
+    new, _ = merge_addon_options(
+        {"devices": [{"serial": "1", "password": "p"}],
+         "battery_login": {"username": "homepower", "password": "123456"}},
+        "1", "fw-user", "fw-pass")
+    assert new["battery_login"] == {"username": "fw-user", "password": "fw-pass"}
+
+
+def test_merge_refuses_a_different_login_another_battery_may_rely_on():
+    with pytest.raises(MoveError, match="another battery") as exc:
         merge_addon_options(
-            {"devices": [], "battery_login": {"username": "someone-else", "password": "x"}},
+            {"devices": [{"serial": "999", "password": "x"}],
+             "battery_login": {"username": "someone-else", "password": "secret"}},
             "1", "fw-user", "fw-pass")
+    assert "someone-else" in str(exc.value) and "secret" not in str(exc.value)
 
 
 def test_merge_refuses_an_add_on_too_old_for_battery_login():
