@@ -23,10 +23,11 @@ REG_RESERVE_ON = 105
 REG_RESERVE_BLOCK = 120           # block 120-123 = [const 100, reserve_off, const 2, excess]
 REG_EXCESS = 123
 REG_SCHEDULE = 126                # block 126-230 (105 registers)
+SCHEDULE_LEN = 105
 REG_MODE = 231
 
 ALLOWED_SINGLE = {REG_MAX_SOC, REG_RESERVE_ON, REG_EXCESS, REG_MODE}
-ALLOWED_BLOCK = {REG_RESERVE_BLOCK: 4, REG_SCHEDULE: 105}
+ALLOWED_BLOCK = {REG_RESERVE_BLOCK: 4, REG_SCHEDULE: SCHEDULE_LEN}
 RESERVE_CONST = (100, 2)          # regs 120 and 122 — stable across every capture
 
 MODES = {"auto": 1, "semi": 2, "manual": 3}
@@ -158,6 +159,22 @@ def schedule_registers_to_json(block: list[int]) -> dict:
             if wins:
                 sched.setdefault(day, {})[cat] = wins
     return sched
+
+
+def schedule_block_from_frame(frame: bytes) -> list[int]:
+    """The 105 register values a build_schedule() frame writes (for read-back)."""
+    payload = frame[17:17 + SCHEDULE_LEN * 2]
+    return [struct.unpack("<H", payload[i:i + 2])[0] for i in range(0, len(payload), 2)]
+
+
+def schedule_summary(sched: dict) -> str:
+    """Short sensor state for a schedule, e.g. '3 days, 6 windows' or 'Empty'."""
+    windows = sum(len(wins) for cats in sched.values() for wins in cats.values())
+    if not windows:
+        return "Empty"
+    days = len(sched)
+    return (f"{days} day{'s' if days != 1 else ''}, "
+            f"{windows} window{'s' if windows != 1 else ''}")
 
 
 # --- decode holding-register frames read locally over SSH --------------------
@@ -332,6 +349,17 @@ class MqttControl:
             regs[REG_RESERVE_BLOCK + i] = value
         regs[REG_MODE] = self.read(REG_MODE, 1)[0]
         return regs
+
+    def read_schedule(self) -> dict:
+        """Read the weekly schedule (126-230) over MQTT -> canonical JSON.
+
+        Blocking — call via executor. Raises ValueError on a short reply rather
+        than decoding a partial block into a wrong-but-plausible schedule.
+        """
+        block = self.read(REG_SCHEDULE, SCHEDULE_LEN)
+        if len(block) != SCHEDULE_LEN:
+            raise ValueError(f"schedule read returned {len(block)} registers")
+        return schedule_registers_to_json(block)
 
 
 def _next_publish(buf: bytes):

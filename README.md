@@ -32,7 +32,8 @@ on units that can only report over MQTT, go through Enertek's broker until you
 
 **HA OS / Supervised:**
 
-1. **Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add
+1. **Settings → Apps → Install app → ⋮ → Repositories** (on older Home
+   Assistant: **Settings → Add-ons → Add-on Store → ⋮ → Repositories**), add
    `https://github.com/hacs/addons`.
 2. Install and **Start** the **Get HACS** add-on, then restart Home Assistant.
 3. **Settings → Devices & Services → + Add Integration → HACS**, and authorise
@@ -172,6 +173,12 @@ Turn it on under **Configure → Settings → Enable control**. It adds:
         discharge:   [{ start: "17:00", end: "21:00", power: 100 }]
   ```
 
+- A **Schedule** sensor showing the schedule stored on the battery, e.g.
+  `2 days, 4 windows` or `Empty`. Its `schedule` attribute holds the full
+  schedule in the same format `set_schedule` takes, so you can copy it from
+  **Developer Tools → States**, edit it and send it back. `active` is `true` only
+  in Manual mode, the only mode where the battery follows the schedule.
+
 See [ready-made schedules](examples/schedules.md) and
 [automation ideas](examples/automations.md): pre-charging before a cloudy day,
 using a cheap power window, raising the reserve before a storm.
@@ -183,9 +190,10 @@ to begin with. When their cloud is down, control stops. To avoid that, move the
 battery to your own broker:
 
 1. Install the [**OpenHomepower Secure Broker**](https://github.com/seanlewis/openhomepower-broker)
-   add-on, **version 0.2.2 or later**: **Settings → Add-ons → Add-on Store → ⋮ →
-   Repositories**, add `https://github.com/seanlewis/openhomepower-broker`, then
-   install it. There's no need to configure it.
+   add-on, **version 0.2.2 or later**: **Settings → Apps → Install app → ⋮ →
+   Repositories** (older Home Assistant: **Settings → Add-ons → Add-on Store → ⋮
+   → Repositories**), add `https://github.com/seanlewis/openhomepower-broker`,
+   then install it. There's no need to configure it.
 2. Reserve Home Assistant's IP address in your router, because the battery will
    be pointed at it.
 3. **Configure → Move to local broker**, check the two addresses, and submit.

@@ -172,12 +172,22 @@ def _register_services(hass: HomeAssistant) -> None:
     async def _set_schedule(call: ServiceCall) -> None:
         windows = control.schedule_json_to_windows(call.data["schedule"])
         frame = control.build_schedule(windows)
+        # What the battery will hold: two windows per category max, normalised.
+        written = control.schedule_registers_to_json(
+            control.schedule_block_from_frame(frame))
         published = False
         for store in hass.data.get(DOMAIN, {}).values():
             mqtt: MqttControl | None = store.get("mqtt")
             if mqtt is not None:
                 await hass.async_add_executor_job(mqtt.publish, frame)
                 published = True
+                control_coordinator: ControlCoordinator | None = store.get("control")
+                if control_coordinator is not None:
+                    # Optimistic, then confirm with a read-back.
+                    if control_coordinator.data is not None:
+                        control_coordinator.async_set_updated_data(
+                            {**control_coordinator.data, "schedule": written})
+                    await control_coordinator.async_request_refresh()
         if not published:
             _LOGGER.warning("set_schedule called but no entry has control enabled")
 

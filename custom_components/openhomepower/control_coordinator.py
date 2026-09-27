@@ -2,12 +2,15 @@
 
 Reads the writable config (mode / max-SoC / reserve / excess) via a
 source-specific reader: SSH entries scrape the gateway's log, MQTT entries do an
-fn-03 read over the broker. Only *writes* go over MQTT (`self.mqtt`). Config
-changes rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
+fn-03 read over the broker. Writes go over MQTT (`self.mqtt`). The weekly
+schedule is always read over MQTT, whatever the read source — the daemon never
+reads that block on its own, so it is never in the SSH log. Config changes
+rarely, so this polls slowly (CONTROL_SCAN_INTERVAL)."""
 from __future__ import annotations
 
 import logging
 import struct
+from dataclasses import replace
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -66,6 +69,10 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
         )
         self._reader = reader
         self.mqtt = mqtt
+        # Own client-id, so a schedule read can never evict (or be evicted by)
+        # a concurrent write or config read.
+        self._schedule_mqtt = MqttControl(
+            replace(mqtt.cfg, client_id=f"openhomepower-ha-sched-{mqtt.cfg.serial}"))
 
     async def _async_update_data(self) -> dict:
         try:
@@ -83,4 +90,12 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
         for key, value in control.control_state_from_regs(regs).items():
             if value is not None:
                 state[key] = value
+        # Best-effort: a unit that won't answer the schedule read leaves just the
+        # schedule sensor unavailable (or on its last-known value), never the
+        # mode / reserve entities.
+        try:
+            state["schedule"] = await self.hass.async_add_executor_job(
+                self._schedule_mqtt.read_schedule)
+        except (OSError, ValueError, IndexError, struct.error) as err:
+            _LOGGER.debug("schedule read failed: %s", err)
         return state

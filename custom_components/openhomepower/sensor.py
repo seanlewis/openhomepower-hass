@@ -14,7 +14,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import control
 from .const import DIAGNOSTIC_KEYS, DOMAIN, EXCLUDED_KEYS, MANUFACTURER, MODEL
+from .control_coordinator import ControlCoordinator, control_device_info
 from .coordinator import HomepowerCoordinator
 from .entity_spec import HomepowerSensorSpec, build_specs
 
@@ -44,6 +46,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
     async_add_entities(
         HomepowerSensor(coordinator, entry, spec) for spec in specs
     )
+    control_coordinator: ControlCoordinator | None = (
+        hass.data[DOMAIN][entry.entry_id].get("control"))
+    if control_coordinator is not None:      # control enabled
+        async_add_entities([HomepowerScheduleSensor(control_coordinator, entry)])
 
 
 class HomepowerSensor(CoordinatorEntity[HomepowerCoordinator], SensorEntity):
@@ -95,3 +101,43 @@ class HomepowerSensor(CoordinatorEntity[HomepowerCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         return super().available and self._spec.key in (self.coordinator.data or {})
+
+
+class HomepowerScheduleSensor(CoordinatorEntity[ControlCoordinator], SensorEntity):
+    """The weekly schedule stored on the battery (opt-in control).
+
+    State is a short summary; the full schedule is in the `schedule` attribute,
+    in exactly the format `openhomepower.set_schedule` takes, so it can be
+    copied, edited and sent back.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "schedule"
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(self, coordinator: ControlCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_schedule"
+        self._attr_device_info = control_device_info(entry)
+
+    @property
+    def _schedule(self) -> dict | None:
+        return (self.coordinator.data or {}).get("schedule")
+
+    @property
+    def native_value(self) -> str | None:
+        sched = self._schedule
+        return None if sched is None else control.schedule_summary(sched)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        mode = (self.coordinator.data or {}).get("mode")
+        return {
+            "schedule": self._schedule,
+            # The battery only follows the schedule in Manual mode.
+            "active": mode == "manual" if mode is not None else None,
+        }
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._schedule is not None

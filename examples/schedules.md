@@ -4,6 +4,14 @@
 cleared. Schedules only take effect while the battery is in **Manual** mode
 (set the *Application mode* entity to Manual).
 
+## See the current schedule
+
+The **Schedule** sensor shows what's stored on the battery. Its `schedule`
+attribute is already in the format below, so the easiest way to change one
+window is: open **Developer Tools → States**, copy the sensor's `schedule`
+attribute, edit it, and paste it in as `schedule:` in the action. The sensor
+updates within a few seconds of a `set_schedule` call.
+
 ## Format
 
 ```yaml

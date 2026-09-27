@@ -113,3 +113,71 @@ def test_read_config_assembles_registers(monkeypatch):
     assert control.control_state_from_regs(regs) == {
         "mode": "semi", "max_soc": 90, "reserve_on": 5,
         "reserve_off": 8, "excess": 40}
+
+
+# --- schedule read-back (Schedule sensor) ------------------------------------
+_SCHED = {
+    "mon": {"grid_charge": [{"start": "02:00", "end": "05:00", "power": 100}],
+            "discharge": [{"start": "17:00", "end": "21:00", "power": 90}]},
+    "sat": {"pv_charge": [{"start": "09:00", "end": "12:00", "power": 80},
+                          {"start": "13:00", "end": "15:00", "power": 60}]},
+}
+
+
+def _mqtt_with_reads(monkeypatch, replies):
+    cfg = control.BrokerConfig(host="h", port=1, username="u", password="p",
+                               serial="0000000000")
+    mc = control.MqttControl(cfg)
+    calls = []
+
+    def fake_read(reg, count, timeout=15):
+        calls.append((reg, count))
+        return replies[reg]
+
+    monkeypatch.setattr(mc, "read", fake_read)
+    return mc, calls
+
+
+def test_schedule_block_from_frame_matches_payload():
+    frame = control.build_schedule(control.schedule_json_to_windows(_SCHED))
+    block = control.schedule_block_from_frame(frame)
+    assert len(block) == 105
+    assert control.schedule_registers_to_json(block) == _SCHED
+
+
+def test_schedule_block_normalises_extra_windows():
+    # A third window can't be stored; the read-back shows what the battery holds.
+    three = {"tue": {"discharge": [{"start": f"{h:02d}:00", "end": f"{h:02d}:30",
+                                    "power": 100} for h in (6, 12, 18)]}}
+    frame = control.build_schedule(control.schedule_json_to_windows(three))
+    held = control.schedule_registers_to_json(control.schedule_block_from_frame(frame))
+    assert [w["start"] for w in held["tue"]["discharge"]] == ["06:00", "12:00"]
+
+
+def test_read_schedule_decodes_block(monkeypatch):
+    block = control.schedule_block_from_frame(
+        control.build_schedule(control.schedule_json_to_windows(_SCHED)))
+    mc, calls = _mqtt_with_reads(monkeypatch, {126: block})
+    assert mc.read_schedule() == _SCHED
+    assert calls == [(126, 105)]              # one fn-03 read of the whole block
+
+
+def test_read_schedule_empty_block(monkeypatch):
+    # Live read from a unit with no schedule set (2026-09-27): zeroed times,
+    # 100%/100% powers.
+    mc, _ = _mqtt_with_reads(monkeypatch, {126: [0] * 84 + [0x6464] * 21})
+    assert mc.read_schedule() == {}
+
+
+def test_read_schedule_rejects_short_reply(monkeypatch):
+    import pytest
+    mc, _ = _mqtt_with_reads(monkeypatch, {126: [0] * 60})
+    with pytest.raises(ValueError):
+        mc.read_schedule()
+
+
+def test_schedule_summary():
+    assert control.schedule_summary({}) == "Empty"
+    assert control.schedule_summary(_SCHED) == "2 days, 4 windows"
+    one = {"sun": {"discharge": [{"start": "17:00", "end": "21:00", "power": 100}]}}
+    assert control.schedule_summary(one) == "1 day, 1 window"

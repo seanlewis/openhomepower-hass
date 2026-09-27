@@ -109,6 +109,9 @@
       "reserve_on_grid": { "name": "Reserve limit (on-grid)" },
       "reserve_off_grid": { "name": "Reserve limit (off-grid)" },
       "excess_gen": { "name": "Excess generation to charge" }
+    },
+    "sensor": {
+      "schedule": { "name": "Schedule" }
     }
   },
   "services": {
