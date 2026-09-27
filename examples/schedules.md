@@ -1,8 +1,27 @@
-# Schedule examples for `openhomepower.set_schedule`
+# Battery schedules
 
-`set_schedule` writes a **complete** weekly schedule — anything you don't list is
-cleared. Schedules only take effect while the battery is in **Manual** mode
-(set the *Application mode* entity to Manual).
+The battery can follow a weekly schedule of **grid charge**, **solar charge**
+and **discharge** windows, but only while it's in **Manual** mode. Control must
+be enabled (**Configure → Settings → Enable control**).
+
+## Set the schedule: Configure → Schedule
+
+The easiest way. Go to **Settings → Devices & services → OpenHomepower →
+Configure → Schedule**.
+
+- The form opens with the schedule that's on the battery now.
+- Each type has **two windows**. Tick **Use this window**, set the start, end
+  and power, and tick the days it runs. Most schedules need just one window per
+  type, e.g. grid charge 02:00–05:00 every day.
+- Use the second window for a different pattern on other days (weekdays vs
+  weekends), or a second window on the same day.
+- Set **Application mode** to **Manual** for the battery to follow it.
+- **Saving replaces the battery's whole schedule.** It's only sent if you
+  changed something; changing just the mode leaves the schedule alone.
+- A window can't cross midnight. Split it across both windows, e.g.
+  23:00–23:59 and 00:00–05:00.
+
+The **Schedule** sensor confirms what the battery stored within a few seconds.
 
 ## See the current schedule
 
@@ -61,7 +80,15 @@ It shows a table like this:
 
 If your entity ID differs, change it on the first line.
 
-## Format
+## Schedules in automations
+
+For automations (a cheap power window, a storm warning), use the
+`openhomepower.set_schedule` action. It writes a **complete** weekly schedule:
+anything you don't list is cleared. The form above shows schedules set this way;
+if one has more than two different windows of a type, the form warns you before
+anything is replaced.
+
+### Format
 
 ```yaml
 action: openhomepower.set_schedule
@@ -84,7 +111,7 @@ data:
 
 ---
 
-## Time-of-use: cheap overnight grid charge, evening discharge
+### Time-of-use: cheap overnight grid charge, evening discharge
 
 ```yaml
 action: openhomepower.set_schedule
@@ -103,7 +130,7 @@ data:
     sun: *tou
 ```
 
-## Maximise self-consumption: charge from solar through the day
+### Maximise self-consumption: charge from solar through the day
 
 ```yaml
 action: openhomepower.set_schedule
@@ -120,7 +147,7 @@ data:
     sun: *pv
 ```
 
-## Weekday vs weekend (two different patterns)
+### Weekday vs weekend (two different patterns)
 
 ```yaml
 action: openhomepower.set_schedule
@@ -141,7 +168,7 @@ data:
     sun: *we
 ```
 
-## Clear the schedule (no windows)
+### Clear the schedule (no windows)
 
 ```yaml
 action: openhomepower.set_schedule

@@ -17,6 +17,8 @@ gives you back:
 - **Daily energy counters for the Energy Dashboard**
 - Optional **control**: application mode, reserve limits and weekly schedules
   (off by default)
+- [Ready-made dashboard cards](examples/dashboards.md), or a complete dashboard
+  to paste in
 
 On most units, monitoring needs no Enertek cloud at all. Control, and monitoring
 on units that can only report over MQTT, go through Enertek's broker until you
@@ -139,15 +141,22 @@ In **Settings → Dashboards → Energy**:
 
 | Section | Sensor |
 | --- | --- |
-| Solar production | Daily Solar Generation |
-| Grid consumption | Daily Grid Import |
-| Return to grid | Daily Grid Export |
-| Battery in / out | Daily Battery Charge / Daily Battery Discharge |
-| Grid power (optional, "Standard") | Grid Power (signed: + import, − export) |
+| Solar production | Solar generated today |
+| Grid consumption | Grid imported today |
+| Return to grid | Grid exported today |
+| Battery in / out | Battery charged today / Battery discharged today |
+| Grid power (optional, "Standard") | Grid power (signed: + import, − export) |
 
 The counters reset at the battery's midnight, and Home Assistant handles that
 correctly. There's a [step-by-step walkthrough](examples/energy-dashboard.md),
 including the AC-vs-DC and double-counting gotchas.
+
+## Dashboards
+
+[Ready-made cards](examples/dashboards.md) using Home Assistant's built-in
+cards: at a glance, battery gauge, live power, today's totals, the last 7 days,
+a control panel, the schedule, battery health and a phone summary. There's also
+a [complete dashboard](examples/dashboard.yaml) you can paste in whole.
 
 ## Control (optional)
 
@@ -160,26 +169,20 @@ Turn it on under **Configure → Settings → Enable control**. It adds:
 - **Application mode** (Automatic / Semi-automatic / Manual)
 - **Maximum state of charge**, **reserve limits (on/off-grid)** and **excess
   generation to charge**
-- **`openhomepower.set_schedule`**, which writes a full weekly schedule (Manual
-  mode). It **replaces** the whole schedule, so any day or window you leave out
-  is cleared:
-
-  ```yaml
-  service: openhomepower.set_schedule
-  data:
-    schedule:
-      mon:
-        grid_charge: [{ start: "02:00", end: "05:00", power: 100 }]
-        discharge:   [{ start: "17:00", end: "21:00", power: 100 }]
-  ```
-
+- **Configure → Schedule**: a form for the weekly charge and discharge
+  schedule, pre-filled with what's on the battery. For each type (grid charge,
+  solar charge, discharge) you get two windows, each with a start, end, power
+  and the days it runs. It also has the application mode, because the battery
+  only follows the schedule in **Manual** mode. Saving replaces the battery's
+  whole schedule, and only happens if you changed something.
 - A **Schedule** sensor showing the schedule stored on the battery, e.g.
-  `2 days, 4 windows` or `Empty`. Its `schedule` attribute holds the full
-  schedule in the same format `set_schedule` takes, so you can copy it from
-  **Developer Tools → States**, edit it and send it back. `active` is `true` only
-  in Manual mode, the only mode where the battery follows the schedule.
-  [How to view it](examples/schedules.md#see-the-current-schedule), including
-  a dashboard card.
+  `2 days, 4 windows` or `Empty`. `active` is `true` only in Manual mode.
+  [How to view the full schedule](examples/schedules.md#see-the-current-schedule),
+  including a dashboard card.
+- **`openhomepower.set_schedule`**, an action for automations that writes a
+  full weekly schedule. Like the form, it **replaces** the whole schedule, so
+  any day or window you leave out is cleared. See
+  [schedules in automations](examples/schedules.md#schedules-in-automations).
 
 See [ready-made schedules](examples/schedules.md) and
 [automation ideas](examples/automations.md): pre-charging before a cloudy day,

@@ -71,7 +71,7 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
         self.mqtt = mqtt
         # Own client-id, so a schedule read can never evict (or be evicted by)
         # a concurrent write or config read.
-        self._schedule_mqtt = MqttControl(
+        self.schedule_reader = MqttControl(
             replace(mqtt.cfg, client_id=f"openhomepower-ha-sched-{mqtt.cfg.serial}"))
 
     async def _async_update_data(self) -> dict:
@@ -95,7 +95,7 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
         # mode / reserve entities.
         try:
             state["schedule"] = await self.hass.async_add_executor_job(
-                self._schedule_mqtt.read_schedule)
+                self.schedule_reader.read_schedule)
         except (OSError, ValueError, IndexError, struct.error) as err:
             _LOGGER.debug("schedule read failed: %s", err)
         return state

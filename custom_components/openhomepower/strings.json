@@ -37,6 +37,7 @@
         "title": "OpenHomepower",
         "menu_options": {
           "settings": "Settings",
+          "schedule": "Schedule (charge and discharge times)",
           "move_local": "Move to local broker (stop using Enertek's cloud)",
           "move_vendor": "Move back to Enertek's broker"
         }
@@ -76,12 +77,85 @@
       },
       "move_vendor_run": {
         "title": "Moving your battery"
+      },
+      "schedule": {
+        "title": "Battery schedule",
+        "description": "The battery follows this schedule only in **Manual** mode. Each window runs on the days ticked; a day can have up to two windows of each type.\n\nSaving replaces the battery's whole schedule. A window can't cross midnight: split it into two (e.g. 23:00–23:59 and 00:00–05:00).{warning}",
+        "data": {
+          "mode": "Application mode"
+        },
+        "sections": {
+          "grid_charge_1": {
+            "name": "Grid charge — window 1",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          },
+          "grid_charge_2": {
+            "name": "Grid charge — window 2",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          },
+          "pv_charge_1": {
+            "name": "Solar charge — window 1",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          },
+          "pv_charge_2": {
+            "name": "Solar charge — window 2",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          },
+          "discharge_1": {
+            "name": "Discharge — window 1",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          },
+          "discharge_2": {
+            "name": "Discharge — window 2",
+            "data": {
+              "enabled": "Use this window",
+              "start": "Start",
+              "end": "End",
+              "power": "Power",
+              "days": "Days"
+            }
+          }
+        }
       }
     },
     "error": {
       "mqtt_fields_missing": "MQTT source needs the broker host, username, password and topic serial.",
       "host_required": "Enter the battery's address for the SSH source.",
-      "move_check_failed": "{error}"
+      "move_check_failed": "{error}",
+      "end_before_start": "{window}: the end must be after the start. For a window across midnight, use both windows (e.g. 23:00–23:59 and 00:00–05:00).",
+      "no_days": "{window}: tick at least one day, or untick \"Use this window\".",
+      "overlap": "{window} overlaps the other window of the same type on at least one day.",
+      "write_failed": "Couldn't reach the broker, so nothing was changed. Try again shortly."
     },
     "progress": {
       "moving": "Moving your battery. Its gateway reboots during this, and it can take up to 6 minutes. Please keep this window open."
@@ -90,7 +164,21 @@
       "move_failed": "The move didn't complete: {error}",
       "moved_local": "Done. Your battery is now connected to your local broker, and Home Assistant has been switched to it.",
       "moved_vendor": "Done. Your battery is back on Enertek's broker, and Home Assistant has been switched back.",
-      "moved_vendor_unverified": "The redirect has been removed and Home Assistant switched back, but Enertek's broker didn't answer, so this couldn't be confirmed. Enertek's servers may be down; the battery reconnects when they're back."
+      "moved_vendor_unverified": "The redirect has been removed and Home Assistant switched back, but Enertek's broker didn't answer, so this couldn't be confirmed. Enertek's servers may be down; the battery reconnects when they're back.",
+      "control_disabled": "Turn on control first (Settings → Enable control).",
+      "schedule_unreadable": "Couldn't read the schedule from the battery. Check the broker connection and try again.",
+      "schedule_unchanged": "Nothing changed, so nothing was sent to the battery.",
+      "schedule_saved": "Saved. The Schedule sensor confirms what the battery stored within a few seconds.",
+      "schedule_saved_inactive": "Saved, but the battery isn't in Manual mode, so it won't follow this schedule until you switch to Manual."
+    }
+  },
+  "selector": {
+    "application_mode": {
+      "options": {
+        "auto": "Automatic",
+        "semi": "Semi-automatic",
+        "manual": "Manual"
+      }
     }
   },
   "entity": {

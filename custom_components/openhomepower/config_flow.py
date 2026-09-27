@@ -15,14 +15,20 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
     SelectOptionDict,
+    TimeSelector,
 )
 
-from . import discovery
+from . import control, discovery, schedule_form
 from .const import (
     CONF_BROKER_HOST,
     CONF_BROKER_PASSWORD,
@@ -363,24 +369,147 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         self._move_plan: dict = {}
         self._move_error: str | None = None
         self._move_verified = False
+        self._sched_before: dict = {}
+        self._form_before: dict = {}
+        self._mode_before = "auto"
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """A menu where add-ons exist (the move steps need one); otherwise
-        straight to the settings form, as before."""
+        """A menu when there's more than Settings to offer: Schedule (control
+        enabled) and the move (where add-ons exist). Otherwise straight to the
+        settings form, as before."""
         try:
             from homeassistant.helpers.hassio import is_hassio
 
             supervised = is_hassio(self.hass)
         except ImportError:
             supervised = False
-        if not supervised:
+        options = ["settings"]
+        if self._control() is not None:
+            options.append("schedule")
+        if supervised:
+            local = self.config_entry.options.get(CONF_LOCAL_BROKER, False)
+            options.append("move_vendor" if local else "move_local")
+        if len(options) == 1:
             return await self.async_step_settings(user_input)
-        local = self.config_entry.options.get(CONF_LOCAL_BROKER, False)
-        return self.async_show_menu(
-            step_id="init",
-            menu_options=["settings", "move_vendor" if local else "move_local"],
+        return self.async_show_menu(step_id="init", menu_options=options)
+
+    # -- schedule --
+
+    def _control(self):
+        """The entry's live control store (coordinator + MQTT), or None."""
+        store = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}
+        if store.get("control") is None or store.get("mqtt") is None:
+            return None
+        return store
+
+    async def async_step_schedule(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The whole weekly schedule and the mode, as one form.
+
+        Pre-filled from what the battery holds. Saving rewrites the schedule
+        only if it was changed here, so changing just the mode never replaces a
+        schedule set by an automation that the form can't show exactly.
+        """
+        store = self._control()
+        if store is None:
+            return self.async_abort(reason="control_disabled")
+        coordinator = store["control"]
+        data = coordinator.data or {}
+
+        if user_input is None:
+            current = data.get("schedule")
+            if current is None:
+                try:
+                    current = await self.hass.async_add_executor_job(
+                        coordinator.schedule_reader.read_schedule)
+                except (OSError, ValueError, IndexError) as err:
+                    _LOGGER.warning("schedule form: couldn't read the schedule: %s", err)
+                    return self.async_abort(reason="schedule_unreadable")
+            self._sched_before = current
+            self._form_before, _ = schedule_form.schedule_to_form(current)
+            self._mode_before = data.get("mode") or "auto"
+            return self._schedule_form(self._form_before, self._mode_before, {})
+
+        values = {k: v for k, v in user_input.items() if k != "mode"}
+        mode = user_input.get("mode", self._mode_before)
+        sched, problems = schedule_form.form_to_schedule(values)
+        if problems:
+            # Errors inside collapsible sections aren't reliably shown, so name
+            # the window in the form-level message instead.
+            key, code = next(iter(problems.items()))
+            return self._schedule_form(values, mode, {"base": code}, key)
+
+        before, _ = schedule_form.form_to_schedule(self._form_before)
+        changed = schedule_form.normalise(sched) != schedule_form.normalise(before)
+        frames = []
+        if mode != self._mode_before:
+            frames.append(control.build_mode(mode))
+        if changed:
+            frames.append(control.build_schedule(control.schedule_json_to_windows(sched)))
+        if not frames:
+            return self.async_abort(reason="schedule_unchanged")
+        try:
+            await self.hass.async_add_executor_job(store["mqtt"].publish_many, frames)
+        except OSError as err:
+            _LOGGER.warning("schedule form: write failed: %s", err)
+            return self._schedule_form(values, mode, {"base": "write_failed"})
+        if coordinator.data is not None:      # optimistic, then confirm
+            update = {"mode": mode}
+            if changed:
+                update["schedule"] = sched
+            coordinator.async_set_updated_data({**coordinator.data, **update})
+        await coordinator.async_request_refresh()
+        if mode != "manual" and sched:
+            return self.async_abort(reason="schedule_saved_inactive")
+        return self.async_abort(reason="schedule_saved")
+
+    def _schedule_form(self, values: dict, mode: str, errors: dict[str, str],
+                       problem: str = "") -> ConfigFlowResult:
+        mixed = schedule_form.mixed_categories(self._sched_before)
+        days = [SelectOptionDict(value=d, label=d.capitalize())
+                for d in schedule_form.DAYS]
+        fields: dict = {
+            vol.Required("mode", default=mode): SelectSelector(SelectSelectorConfig(
+                mode=SelectSelectorMode.DROPDOWN, translation_key="application_mode",
+                options=list(control.MODES))),
+        }
+        for cat in schedule_form.CATEGORIES:
+            for slot in schedule_form.SLOTS:
+                key = schedule_form.field(cat, slot)
+                win = values.get(key) or {}
+                fields[vol.Required(key)] = section(vol.Schema({
+                    vol.Required("enabled", default=bool(win.get("enabled"))):
+                        BooleanSelector(),
+                    vol.Required("start", default=win.get("start", "00:00")):
+                        TimeSelector(),
+                    vol.Required("end", default=win.get("end", "00:00")):
+                        TimeSelector(),
+                    vol.Required("power", default=int(win.get("power", 100))):
+                        NumberSelector(NumberSelectorConfig(
+                            min=0, max=100, step=1, unit_of_measurement="%",
+                            mode=NumberSelectorMode.SLIDER)),
+                    vol.Required("days", default=list(win.get("days") or [])):
+                        SelectSelector(SelectSelectorConfig(
+                            options=days, multiple=True,
+                            mode=SelectSelectorMode.LIST)),
+                }), {"collapsed": not win.get("enabled")})
+        warning = ""
+        if mixed:
+            warning = ("\n\n**Heads up:** the battery's schedule has more than two "
+                       "different windows for " + ", ".join(
+                           schedule_form.LABELS[c].lower() for c in mixed)
+                       + " (set by an automation). Only the two most-used are shown; "
+                       "saving a schedule change here replaces the rest.")
+        return self.async_show_form(
+            step_id="schedule",
+            data_schema=vol.Schema(fields),
+            errors=errors,
+            description_placeholders={
+                "warning": warning,
+                "window": schedule_form.window_label(problem) if problem else ""},
         )
 
     async def async_step_settings(

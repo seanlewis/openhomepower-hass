@@ -1,0 +1,168 @@
+# OpenHomepower: a complete dashboard.
+# Paste it over everything in a new dashboard's
+# Raw configuration editor. See dashboards.md for the steps.
+views:
+- title: Homepower
+  path: homepower
+  icon: mdi:home-battery
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Now
+    - type: gauge
+      entity: sensor.energizer_homepower_state_of_charge
+      name: Battery
+      min: 0
+      max: 100
+      needle: true
+      severity:
+        green: 50
+        yellow: 20
+        red: 0
+    - type: grid
+      columns: 3
+      square: false
+      cards:
+      - type: tile
+        entity: sensor.energizer_homepower_state_of_charge
+        name: Battery
+      - type: tile
+        entity: sensor.energizer_homepower_battery_power
+        name: Battery power
+      - type: tile
+        entity: sensor.energizer_homepower_solar_pv_power
+        name: Solar
+      - type: tile
+        entity: sensor.energizer_homepower_grid_power
+        name: Grid
+      - type: tile
+        entity: sensor.energizer_homepower_house_load
+        name: House
+    - type: entities
+      title: Power now
+      entities:
+      - entity: sensor.energizer_homepower_solar_pv_power
+        name: Solar
+      - entity: sensor.energizer_homepower_house_load
+        name: House
+      - entity: sensor.energizer_homepower_charge_power
+        name: Battery charging
+      - entity: sensor.energizer_homepower_discharge_power
+        name: Battery discharging
+      - entity: sensor.energizer_homepower_grid_import
+        name: Importing from grid
+      - entity: sensor.energizer_homepower_grid_export
+        name: Exporting to grid
+  - type: grid
+    cards:
+    - type: heading
+      heading: Today
+    - type: glance
+      title: Today
+      columns: 5
+      entities:
+      - entity: sensor.energizer_homepower_solar_generated_today
+        name: Solar
+      - entity: sensor.energizer_homepower_battery_charged_today
+        name: Charged
+      - entity: sensor.energizer_homepower_battery_discharged_today
+        name: Discharged
+      - entity: sensor.energizer_homepower_grid_imported_today
+        name: Imported
+      - entity: sensor.energizer_homepower_grid_exported_today
+        name: Exported
+    - type: statistics-graph
+      title: Daily energy (7 days)
+      chart_type: bar
+      period: day
+      days_to_show: 7
+      stat_types:
+      - change
+      entities:
+      - entity: sensor.energizer_homepower_solar_generated_today
+        name: Solar
+      - entity: sensor.energizer_homepower_battery_charged_today
+        name: Charged
+      - entity: sensor.energizer_homepower_battery_discharged_today
+        name: Discharged
+      - entity: sensor.energizer_homepower_grid_imported_today
+        name: Imported
+      - entity: sensor.energizer_homepower_grid_exported_today
+        name: Exported
+    - type: history-graph
+      title: Power (24 h)
+      hours_to_show: 24
+      entities:
+      - entity: sensor.energizer_homepower_solar_pv_power
+        name: Solar
+      - entity: sensor.energizer_homepower_house_load
+        name: House
+      - entity: sensor.energizer_homepower_battery_power
+        name: Battery (+ discharging)
+      - entity: sensor.energizer_homepower_grid_power
+        name: Grid (+ importing)
+  # Control: needs control enabled. Delete this section if it isn't.
+  - type: grid
+    cards:
+    - type: heading
+      heading: Control
+    - type: entities
+      title: Battery control
+      entities:
+      - entity: select.energizer_homepower_application_mode
+        name: Mode
+      - entity: number.energizer_homepower_maximum_state_of_charge
+        name: Maximum charge
+      - entity: number.energizer_homepower_reserve_limit_on_grid
+        name: Reserve (on-grid)
+      - entity: number.energizer_homepower_reserve_limit_off_grid
+        name: Reserve (off-grid)
+      - entity: number.energizer_homepower_excess_generation_to_charge
+        name: Excess generation to charge
+      - entity: sensor.energizer_homepower_schedule
+        name: Schedule
+    - type: markdown
+      title: Schedule
+      content: |
+        {% set e = 'sensor.energizer_homepower_schedule' %}
+        {% set s = state_attr(e, 'schedule') or {} %}
+        {% set names = {'grid_charge': 'Grid charge', 'pv_charge': 'Solar charge', 'discharge': 'Discharge'} %}
+        **{{ states(e) }}**{% if state_attr(e, 'active') == false %} · *not active (the battery isn't in Manual mode)*{% endif %}
+
+        {% if s -%}
+        | Day | Type | Window | Power |
+        |---|---|---|---|
+        {% for day in ['mon','tue','wed','thu','fri','sat','sun'] if day in s -%}
+        {% for cat, wins in s[day].items() -%}
+        {% for w in wins -%}
+        | {{ day | capitalize }} | {{ names[cat] }} | {{ w.start }}–{{ w.end }} | {{ w.power }}% |
+        {% endfor %}{% endfor %}{% endfor %}
+        {%- else -%}
+        No windows set.
+        {%- endif %}
+  - type: grid
+    cards:
+    - type: heading
+      heading: Health
+    - type: entities
+      title: Battery health
+      entities:
+      - entity: sensor.energizer_homepower_battery_temperature
+        name: Battery temperature
+      - entity: sensor.energizer_homepower_inverter_temperature
+        name: Inverter temperature
+      - entity: sensor.energizer_homepower_pack_voltage
+        name: Pack voltage
+      - entity: sensor.energizer_homepower_battery_health
+        name: Battery health
+      - entity: sensor.energizer_homepower_ac_voltage
+        name: AC voltage
+      - entity: sensor.energizer_homepower_grid_frequency
+        name: Grid frequency
+      - entity: sensor.energizer_homepower_operating_mode
+        name: Operating mode
+      - entity: sensor.energizer_homepower_device_clock
+        name: Battery clock
