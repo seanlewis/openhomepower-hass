@@ -178,6 +178,8 @@ Turn it on under **Configure → Settings → Enable control**. It adds:
   schedule in the same format `set_schedule` takes, so you can copy it from
   **Developer Tools → States**, edit it and send it back. `active` is `true` only
   in Manual mode, the only mode where the battery follows the schedule.
+  [How to view it](examples/schedules.md#see-the-current-schedule), including
+  a dashboard card.
 
 See [ready-made schedules](examples/schedules.md) and
 [automation ideas](examples/automations.md): pre-charging before a cloudy day,

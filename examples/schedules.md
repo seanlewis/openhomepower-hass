@@ -6,11 +6,60 @@ cleared. Schedules only take effect while the battery is in **Manual** mode
 
 ## See the current schedule
 
-The **Schedule** sensor shows what's stored on the battery. Its `schedule`
-attribute is already in the format below, so the easiest way to change one
-window is: open **Developer Tools → States**, copy the sensor's `schedule`
-attribute, edit it, and paste it in as `schedule:` in the action. The sensor
-updates within a few seconds of a `set_schedule` call.
+The **Schedule** sensor (added when control is enabled) shows what's stored on
+the battery. Its state is only a summary, such as `7 days, 14 windows`. The
+entity's pop-up doesn't show the windows themselves, so use one of these.
+
+### Developer Tools → States
+
+1. Go to **Developer Tools → States**.
+2. Type `schedule` in the **Filter entities** box and find
+   `sensor.energizer_homepower_schedule`. Your entity ID may differ if you
+   renamed the device.
+3. The **Attributes** column shows:
+   - `schedule`: every window, in exactly the format `set_schedule` takes.
+   - `active`: `true` only when the battery is in **Manual** mode, the only mode
+     where it follows the schedule.
+
+**To change one window without retyping the week:** copy the `schedule`
+attribute from here, edit it, and paste it under `schedule:` in the action (see
+[Format](#format)). The sensor updates within a few seconds of a
+`set_schedule` call. To confirm the battery really stored it, run the
+`homeassistant.update_entity` action on the Schedule sensor; that re-reads the
+battery.
+
+### A dashboard card
+
+Add a **Markdown** card to a dashboard (**Edit dashboard → Add card →
+Markdown**) and paste this as its content:
+
+```jinja
+{% set e = 'sensor.energizer_homepower_schedule' %}
+{% set s = state_attr(e, 'schedule') or {} %}
+{% set names = {'grid_charge': 'Grid charge', 'pv_charge': 'Solar charge', 'discharge': 'Discharge'} %}
+**{{ states(e) }}**{% if state_attr(e, 'active') == false %} · *not active (the battery isn't in Manual mode)*{% endif %}
+
+{% if s -%}
+| Day | Type | Window | Power |
+|---|---|---|---|
+{% for day in ['mon','tue','wed','thu','fri','sat','sun'] if day in s -%}
+{% for cat, wins in s[day].items() -%}
+{% for w in wins -%}
+| {{ day | capitalize }} | {{ names[cat] }} | {{ w.start }}–{{ w.end }} | {{ w.power }}% |
+{% endfor %}{% endfor %}{% endfor %}
+{%- else -%}
+No windows set.
+{%- endif %}
+```
+
+It shows a table like this:
+
+| Day | Type | Window | Power |
+|---|---|---|---|
+| Mon | Grid charge | 02:00–05:00 | 100% |
+| Mon | Discharge | 14:00–21:00 | 100% |
+
+If your entity ID differs, change it on the first line.
 
 ## Format
 
