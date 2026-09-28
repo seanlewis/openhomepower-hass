@@ -175,6 +175,11 @@ Turn it on under **Configure → Settings → Enable control**. It adds:
   and the days it runs. It also has the application mode, because the battery
   only follows the schedule in **Manual** mode. Saving replaces the battery's
   whole schedule, and only happens if you changed something.
+- **Real-time schedules.** The battery runs its schedule by its own clock,
+  which never changes for daylight saving. Home Assistant reads that clock,
+  allows for the difference, and re-writes the schedule after each
+  daylight-saving change, so the times you enter are always real times. See
+  [the battery's clock](examples/schedules.md#the-batterys-clock).
 - A **Schedule** sensor showing the schedule stored on the battery, e.g.
   `2 days, 4 windows` or `Empty`. `active` is `true` only in Manual mode.
   [How to view the full schedule](examples/schedules.md#see-the-current-schedule),

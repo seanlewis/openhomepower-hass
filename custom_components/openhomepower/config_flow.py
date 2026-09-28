@@ -28,7 +28,8 @@ from homeassistant.helpers.selector import (
     TimeSelector,
 )
 
-from . import control, discovery, schedule_form
+from . import clock, control, discovery, schedule_form
+from .control_coordinator import ClockUnknown, ScheduleDoesNotFit
 from .const import (
     CONF_BROKER_HOST,
     CONF_BROKER_PASSWORD,
@@ -37,9 +38,12 @@ from .const import (
     CONF_CONTROL_ENABLED,
     CONF_POLL_SECONDS,
     CONF_READ_SOURCE,
+    CONF_REALTIME_SCHEDULE,
+    CONF_TIMEZONE,
     CONF_TOPIC_SERIAL,
     DEFAULT_BROKER_PORT,
     DEFAULT_POLL_SECONDS,
+    DEFAULT_REALTIME_SCHEDULE,
     DEFAULT_READ_SOURCE,
     CONF_HA_IP,
     CONF_LOCAL_BROKER,
@@ -57,6 +61,15 @@ from .transport import Credentials, Gateway, TransportError
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PORT = 34522
+
+
+def _valid_timezone(name: str) -> bool:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
 DEFAULT_USERNAME = "homepower"
 DEFAULT_PASSWORD = "123456"   # vendor default, published in Enertek's setup PDF
 
@@ -423,8 +436,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             current = data.get("schedule")
             if current is None:
                 try:
-                    current = await self.hass.async_add_executor_job(
-                        coordinator.schedule_reader.read_schedule)
+                    current = coordinator.to_real(await self.hass.async_add_executor_job(
+                        coordinator.schedule_reader.read_schedule))
                 except (OSError, ValueError, IndexError) as err:
                     _LOGGER.warning("schedule form: couldn't read the schedule: %s", err)
                     return self.async_abort(reason="schedule_unreadable")
@@ -447,8 +460,17 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         frames = []
         if mode != self._mode_before:
             frames.append(control.build_mode(mode))
+        battery, offset = sched, coordinator.applied
         if changed:
-            frames.append(control.build_schedule(control.schedule_json_to_windows(sched)))
+            # The form is in real time; shift onto the battery's own clock.
+            try:
+                battery, offset = coordinator.prepare_write(sched)
+            except ClockUnknown:
+                return self._schedule_form(values, mode, {"base": "clock_unknown"})
+            except ScheduleDoesNotFit as err:
+                return self._schedule_form(values, mode, {"base": "does_not_fit"},
+                                           days=str(err))
+            frames.append(control.build_schedule(control.schedule_json_to_windows(battery)))
         if not frames:
             return self.async_abort(reason="schedule_unchanged")
         try:
@@ -457,17 +479,30 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             _LOGGER.warning("schedule form: write failed: %s", err)
             return self._schedule_form(values, mode, {"base": "write_failed"})
         if coordinator.data is not None:      # optimistic, then confirm
-            update = {"mode": mode}
-            if changed:
-                update["schedule"] = sched
-            coordinator.async_set_updated_data({**coordinator.data, **update})
-        await coordinator.async_request_refresh()
+            coordinator.async_set_updated_data({**coordinator.data, "mode": mode})
+        if changed:
+            await coordinator.async_written(battery, offset)
+        else:
+            await coordinator.async_request_refresh()
         if mode != "manual" and sched:
             return self.async_abort(reason="schedule_saved_inactive")
         return self.async_abort(reason="schedule_saved")
 
+    def _clock_note(self) -> str:
+        store = self._control() or {}
+        coordinator = store.get("control")
+        if coordinator is None or not coordinator.realtime:
+            return ("Times are the battery's own clock time (real-time schedules are "
+                    "off in Settings).")
+        offset = coordinator.clock.offset()
+        if offset is None:
+            return ("Times are real time. The battery's clock hasn't been read yet; "
+                    "wait a few minutes before saving a schedule change.")
+        extra = "" if offset == 0 else " Home Assistant allows for that automatically."
+        return f"Times are real time. The battery's clock is {clock.describe(offset)}.{extra}"
+
     def _schedule_form(self, values: dict, mode: str, errors: dict[str, str],
-                       problem: str = "") -> ConfigFlowResult:
+                       problem: str = "", days: str = "") -> ConfigFlowResult:
         mixed = schedule_form.mixed_categories(self._sched_before)
         days = [SelectOptionDict(value=d, label=d.capitalize())
                 for d in schedule_form.DAYS]
@@ -509,6 +544,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             errors=errors,
             description_placeholders={
                 "warning": warning,
+                "clock": self._clock_note(),
+                "days": days,
                 "window": schedule_form.window_label(problem) if problem else ""},
         )
 
@@ -548,6 +585,9 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                     errors["base"] = "host_required"
                 else:
                     new_data[CONF_HOST] = s_host
+            tz_name = str(user_input.get(CONF_TIMEZONE, "")).strip()
+            if tz_name and not _valid_timezone(tz_name):
+                errors["base"] = "bad_timezone"
             if not errors:
                 if new_data != dict(data):
                     self.hass.config_entries.async_update_entry(
@@ -585,6 +625,13 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_CONTROL_ENABLED,
                              default=src.get(CONF_CONTROL_ENABLED,
                                              opts.get(CONF_CONTROL_ENABLED, False))): bool,
+                vol.Optional(CONF_REALTIME_SCHEDULE,
+                             default=src.get(CONF_REALTIME_SCHEDULE,
+                                             opts.get(CONF_REALTIME_SCHEDULE,
+                                                      DEFAULT_REALTIME_SCHEDULE))): bool,
+                vol.Optional(CONF_TIMEZONE,
+                             default=src.get(CONF_TIMEZONE,
+                                             opts.get(CONF_TIMEZONE, ""))): str,
                 vol.Optional(CONF_BROKER_HOST,
                              default=src.get(CONF_BROKER_HOST,
                                              opts.get(CONF_BROKER_HOST, d.get("host", "")))): str,

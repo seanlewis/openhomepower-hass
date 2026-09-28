@@ -24,7 +24,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 
 from . import control
 from .const import (
@@ -35,9 +35,12 @@ from .const import (
     CONF_CONTROL_ENABLED,
     CONF_POLL_SECONDS,
     CONF_READ_SOURCE,
+    CONF_REALTIME_SCHEDULE,
     CONF_STALE_SECONDS,
+    CONF_TIMEZONE,
     CONF_TOPIC_SERIAL,
     DEFAULT_BROKER_PORT,
+    DEFAULT_REALTIME_SCHEDULE,
     DEFAULT_POLL_SECONDS,
     DEFAULT_STALE_SECONDS,
     DOMAIN,
@@ -46,7 +49,14 @@ from .const import (
     SERVICE_SET_SCHEDULE,
 )
 from .control import BrokerConfig, MqttControl
-from .control_coordinator import ControlCoordinator, MqttConfigReader, SshConfigReader
+from .clock_tracker import ClockTracker
+from .control_coordinator import (
+    ClockUnknown,
+    ControlCoordinator,
+    MqttConfigReader,
+    ScheduleDoesNotFit,
+    SshConfigReader,
+)
 from .coordinator import HomepowerCoordinator
 from .mqtt_coordinator import MqttReadCoordinator
 from .registry import RegisterMap
@@ -107,7 +117,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_config_entry_first_refresh()
 
     try:
-        store: dict = {"coordinator": coordinator, "control": None, "mqtt": None}
+        clock_tracker = ClockTracker(coordinator, entry.options.get(CONF_TIMEZONE, ""))
+        entry.async_on_unload(clock_tracker.close)
+        store: dict = {"coordinator": coordinator, "control": None, "mqtt": None,
+                       "clock": clock_tracker}
 
         broker = _broker_config(entry)
         if broker is not None:
@@ -120,7 +133,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 reader = MqttConfigReader(hass, MqttControl(read_cfg))
             else:
                 reader = SshConfigReader(coordinator.gateway)
-            control_coordinator = ControlCoordinator(hass, reader, mqtt)
+            control_coordinator = ControlCoordinator(
+                hass, reader, mqtt, entry.entry_id, clock_tracker,
+                realtime=entry.options.get(CONF_REALTIME_SCHEDULE,
+                                           DEFAULT_REALTIME_SCHEDULE))
+            await control_coordinator.async_load()
             # Best-effort: a control-read hiccup must not block setup.
             await control_coordinator.async_refresh()
             store["control"] = control_coordinator
@@ -170,24 +187,31 @@ def _register_services(hass: HomeAssistant) -> None:
         return
 
     async def _set_schedule(call: ServiceCall) -> None:
-        windows = control.schedule_json_to_windows(call.data["schedule"])
-        frame = control.build_schedule(windows)
-        # What the battery will hold: two windows per category max, normalised.
-        written = control.schedule_registers_to_json(
-            control.schedule_block_from_frame(frame))
+        # Normalise what was asked for (two windows per type per day at most).
+        real = control.schedule_registers_to_json(control.schedule_block_from_frame(
+            control.build_schedule(control.schedule_json_to_windows(call.data["schedule"]))))
         published = False
         for store in hass.data.get(DOMAIN, {}).values():
             mqtt: MqttControl | None = store.get("mqtt")
-            if mqtt is not None:
-                await hass.async_add_executor_job(mqtt.publish, frame)
-                published = True
-                control_coordinator: ControlCoordinator | None = store.get("control")
-                if control_coordinator is not None:
-                    # Optimistic, then confirm with a read-back.
-                    if control_coordinator.data is not None:
-                        control_coordinator.async_set_updated_data(
-                            {**control_coordinator.data, "schedule": written})
-                    await control_coordinator.async_request_refresh()
+            control_coordinator: ControlCoordinator | None = store.get("control")
+            if mqtt is None or control_coordinator is None:
+                continue
+            # Times are real time; shift them onto the battery's own clock.
+            try:
+                battery, offset = control_coordinator.prepare_write(real)
+            except ClockUnknown as err:
+                raise HomeAssistantError(
+                    "The battery's clock hasn't been read yet, so the schedule can't be "
+                    "converted to its time. Try again in a few minutes.") from err
+            except ScheduleDoesNotFit as err:
+                raise HomeAssistantError(
+                    "After allowing for the battery's clock, these days would need more "
+                    f"than two windows of one type: {err}. Move a window away from "
+                    "midnight.") from err
+            frame = control.build_schedule(control.schedule_json_to_windows(battery))
+            await hass.async_add_executor_job(mqtt.publish, frame)
+            published = True
+            await control_coordinator.async_written(battery, offset)
         if not published:
             _LOGGER.warning("set_schedule called but no entry has control enabled")
 

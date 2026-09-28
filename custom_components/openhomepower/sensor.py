@@ -14,7 +14,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import control
+from . import clock, control
+from .clock_tracker import ClockTracker
 from .const import DIAGNOSTIC_KEYS, DOMAIN, EXCLUDED_KEYS, MANUFACTURER, MODEL
 from .control_coordinator import ControlCoordinator, control_device_info
 from .coordinator import HomepowerCoordinator
@@ -46,6 +47,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
     async_add_entities(
         HomepowerSensor(coordinator, entry, spec) for spec in specs
     )
+    tracker: ClockTracker | None = hass.data[DOMAIN][entry.entry_id].get("clock")
+    if tracker is not None:
+        async_add_entities([HomepowerClockOffsetSensor(coordinator, entry, tracker)])
     control_coordinator: ControlCoordinator | None = (
         hass.data[DOMAIN][entry.entry_id].get("control"))
     if control_coordinator is not None:      # control enabled
@@ -132,12 +136,52 @@ class HomepowerScheduleSensor(CoordinatorEntity[ControlCoordinator], SensorEntit
     @property
     def extra_state_attributes(self) -> dict:
         mode = (self.coordinator.data or {}).get("mode")
+        data = self.coordinator.data or {}
         return {
             "schedule": self._schedule,
             # The battery only follows the schedule in Manual mode.
             "active": mode == "manual" if mode is not None else None,
+            # Real time unless real-time schedules are off; the battery holds
+            # `battery_schedule`, shifted by its clock's offset.
+            "times": "real" if self.coordinator.realtime else "battery clock",
+            "battery_schedule": data.get("battery_schedule"),
+            "clock_offset_minutes": self.coordinator.applied,
         }
 
     @property
     def available(self) -> bool:
         return super().available and self._schedule is not None
+
+
+class HomepowerClockOffsetSensor(CoordinatorEntity[HomepowerCoordinator], SensorEntity):
+    """How far the battery's own clock is from real time, in minutes.
+
+    Negative = behind. The battery runs its schedule by this clock, which never
+    adjusts for daylight saving or drift.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "clock_offset"
+    _attr_icon = "mdi:clock-alert-outline"
+    _attr_native_unit_of_measurement = "min"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: HomepowerCoordinator, entry: ConfigEntry,
+                 tracker: ClockTracker) -> None:
+        super().__init__(coordinator)
+        self._tracker = tracker
+        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_clock_offset"
+        self._attr_device_info = control_device_info(entry)
+
+    @property
+    def native_value(self) -> int | None:
+        return self._tracker.offset()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"description": clock.describe(self._tracker.offset()),
+                "time_zone": str(self._tracker.tz)}
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._tracker.offset() is not None

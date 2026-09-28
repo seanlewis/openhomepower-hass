@@ -23,6 +23,42 @@ Configure → Schedule**.
 
 The **Schedule** sensor confirms what the battery stored within a few seconds.
 
+## The battery's clock
+
+The battery runs its schedule by its **own clock**, which was set once and never
+changes for daylight saving (and drifts a little over time). After a
+daylight-saving change it's an hour out, so without help a 4 am charge would run
+at 5 am.
+
+Home Assistant handles this for you:
+
+- It reads the battery's clock and shows how far out it is in the **Battery
+  clock offset** sensor (e.g. `-60`, "1 h 0 min behind").
+- **Every time you see or enter is real time.** When you save 04:00–07:00 on a
+  battery that's an hour behind, Home Assistant stores 03:00–06:00 on it, which
+  is 4–7 am by the real clock. The Schedule sensor's `battery_schedule`
+  attribute shows what's actually stored.
+- **After a daylight-saving change** (or drift of 5 minutes or more), it
+  re-writes the schedule so it keeps running at the same real times, and posts
+  a notification saying so. It waits for two readings in a row before doing it.
+- It **never changes the battery's clock**, and never adjusts anything while it
+  can't read the clock.
+- **The first time** (after updating to 0.7.3) it doesn't change anything. It
+  can't know whether you'd already shifted your schedule by hand, so it shows
+  the schedule at the real times it actually runs, and if the clock is out, asks
+  you to check it. Fix any times under Configure → Schedule.
+
+A few things to know:
+
+- Shifting can move a window across midnight. It's then stored as two pieces,
+  which uses both of that type's windows on those days. If a day would need
+  more than two, Home Assistant tells you instead of saving.
+- The battery's "today" totals still reset at the *battery's* midnight.
+- To manage the offset yourself, turn off **Keep the schedule on real time** in
+  **Configure → Settings**. Times are then the battery's own clock times.
+- Schedules use Home Assistant's time zone. If the battery is somewhere else,
+  set **Time zone for schedules** in the same place (e.g. `Pacific/Auckland`).
+
 ## See the current schedule
 
 The **Schedule** sensor (added when control is enabled) shows what's stored on

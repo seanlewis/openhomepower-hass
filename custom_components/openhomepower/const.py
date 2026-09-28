@@ -74,3 +74,12 @@ DEFAULT_STALE_SECONDS = 180
 CONTROL_SCAN_INTERVAL = timedelta(seconds=600)
 
 SERVICE_SET_SCHEDULE = "set_schedule"
+
+# Real-time schedules: the battery runs its schedule by its own clock, which
+# never adjusts for daylight saving or drift. With this on (the default), HA
+# measures the battery clock's offset and shifts schedule times so people only
+# see and enter real times, re-writing the schedule when the offset changes.
+CONF_REALTIME_SCHEDULE = "realtime_schedule"
+DEFAULT_REALTIME_SCHEDULE = True
+CONF_TIMEZONE = "battery_timezone"       # blank = Home Assistant's time zone
+CLOCK_REWRITE_MINUTES = 5                 # re-write only when the offset moves this much

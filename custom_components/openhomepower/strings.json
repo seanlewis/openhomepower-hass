@@ -50,6 +50,8 @@
           "host": "Battery address (SSH source)",
           "poll_seconds": "Poll interval (seconds)",
           "control_enabled": "Enable control (writes to the battery)",
+          "realtime_schedule": "Keep the schedule on real time (allow for the battery's clock)",
+          "battery_timezone": "Time zone for schedules (blank = Home Assistant's)",
           "broker_host": "Control broker host",
           "broker_port": "Control broker port",
           "broker_user": "Control broker username",
@@ -80,7 +82,7 @@
       },
       "schedule": {
         "title": "Battery schedule",
-        "description": "The battery follows this schedule only in **Manual** mode. Each window runs on the days ticked; a day can have up to two windows of each type.\n\nSaving replaces the battery's whole schedule. A window can't cross midnight: split it into two (e.g. 23:00–23:59 and 00:00–05:00).{warning}",
+        "description": "{clock}\n\nThe battery follows this schedule only in **Manual** mode. Each window runs on the days ticked; a day can have up to two windows of each type.\n\nSaving replaces the battery's whole schedule. A window can't cross midnight: split it into two (e.g. 23:00–23:59 and 00:00–05:00).{warning}",
         "data": {
           "mode": "Application mode"
         },
@@ -155,7 +157,10 @@
       "end_before_start": "{window}: the end must be after the start. For a window across midnight, use both windows (e.g. 23:00–23:59 and 00:00–05:00).",
       "no_days": "{window}: tick at least one day, or untick \"Use this window\".",
       "overlap": "{window} overlaps the other window of the same type on at least one day.",
-      "write_failed": "Couldn't reach the broker, so nothing was changed. Try again shortly."
+      "write_failed": "Couldn't reach the broker, so nothing was changed. Try again shortly.",
+      "clock_unknown": "The battery's clock hasn't been read yet, so the times can't be converted. Try again in a few minutes.",
+      "does_not_fit": "After allowing for the battery's clock, these would need more than two windows of one type: {days}. Move a window away from midnight.",
+      "bad_timezone": "That time zone isn't recognised. Use a name like Pacific/Auckland, or leave it blank."
     },
     "progress": {
       "moving": "Moving your battery. Its gateway reboots during this, and it can take up to 6 minutes. Please keep this window open."
@@ -199,7 +204,8 @@
       "excess_gen": { "name": "Excess generation to charge" }
     },
     "sensor": {
-      "schedule": { "name": "Schedule" }
+      "schedule": { "name": "Schedule" },
+      "clock_offset": { "name": "Battery clock offset" }
     }
   },
   "services": {
