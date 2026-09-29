@@ -196,8 +196,9 @@ using a cheap power window, raising the reserve before a storm.
 ### The broker, and cutting the cord
 
 Control commands reach the battery through an MQTT broker, which is **Enertek's**
-to begin with. When their cloud is down, control stops. To avoid that, move the
-battery to your own broker:
+to begin with. Control also reads the battery's settings back through the broker,
+whichever telemetry source you use, so a change shows straight away. When their
+cloud is down, control stops. To avoid that, move the battery to your own broker:
 
 1. Install the [**OpenHomepower Secure Broker**](https://github.com/seanlewis/openhomepower-broker)
    add-on, **version 0.2.2 or later**: **Settings → Apps → Install app → ⋮ →

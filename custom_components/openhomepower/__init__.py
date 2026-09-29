@@ -55,7 +55,6 @@ from .control_coordinator import (
     ControlCoordinator,
     MqttConfigReader,
     ScheduleDoesNotFit,
-    SshConfigReader,
 )
 from .coordinator import HomepowerCoordinator
 from .mqtt_coordinator import MqttReadCoordinator
@@ -125,14 +124,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         broker = _broker_config(entry)
         if broker is not None:
             mqtt = MqttControl(broker)
-            # Control read-back follows the entry's read source; writes are MQTT.
-            if source == READ_SOURCE_MQTT:
-                # A distinct client-id for the read poll so it can never evict
-                # (or be evicted by) a concurrent write on the write client-id.
-                read_cfg = replace(broker, client_id=f"openhomepower-ha-cfg-{broker.serial}")
-                reader = MqttConfigReader(hass, MqttControl(read_cfg))
-            else:
-                reader = SshConfigReader(coordinator.gateway)
+            # Control read-back is always MQTT, whatever the read source: the
+            # gateway log only holds what the daemon last read, and it reads the
+            # reserve / max-SoC registers only now and then, so an SSH read-back
+            # could lag a write by an hour. A distinct client-id for the read
+            # poll so it can never evict (or be evicted by) a concurrent write
+            # on the write client-id.
+            read_cfg = replace(broker, client_id=f"openhomepower-ha-cfg-{broker.serial}")
+            reader = MqttConfigReader(hass, MqttControl(read_cfg))
             control_coordinator = ControlCoordinator(
                 hass, reader, mqtt, entry.entry_id, clock_tracker,
                 realtime=entry.options.get(CONF_REALTIME_SCHEDULE,

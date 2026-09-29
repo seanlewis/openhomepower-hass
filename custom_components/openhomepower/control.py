@@ -177,33 +177,7 @@ def schedule_summary(sched: dict) -> str:
             f"{windows} window{'s' if windows != 1 else ''}")
 
 
-# --- decode holding-register frames read locally over SSH --------------------
-def parse_holding_frames(tokens: list[str]) -> dict[int, int]:
-    """Merge fn-03 response frames (hex tokens from the log) into {reg: value}.
-
-    Same frame shape as telemetry fn-04: 01 03 | devsn(10) | start(u16le) |
-    nbytes(u8) | payload | crc. CRC-checked; later tokens win (newest value).
-    """
-    merged: dict[int, int] = {}
-    for tok in tokens:
-        try:
-            raw = bytes.fromhex(tok)
-        except ValueError:
-            continue
-        if len(raw) < 17 or raw[0] != 0x01 or raw[1] != 0x03:
-            continue
-        nbytes = raw[14]
-        if len(raw) != 15 + nbytes + 2 or nbytes % 2:
-            continue
-        if crc16(raw[:-2]) != int.from_bytes(raw[-2:], "little"):
-            continue
-        start = int.from_bytes(raw[12:14], "little")
-        payload = raw[15:15 + nbytes]
-        for i in range(0, nbytes, 2):
-            merged[start + i // 2] = int.from_bytes(payload[i:i + 2], "little")
-    return merged
-
-
+# --- decode holding registers into control state -----------------------------
 def control_state_from_regs(regs: dict[int, int]) -> dict:
     """Pull control-entity state from a holding-register map.
 

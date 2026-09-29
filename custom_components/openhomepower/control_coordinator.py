@@ -1,11 +1,11 @@
 """Coordinator for the control entities.
 
-Reads the writable config (mode / max-SoC / reserve / excess) via a
-source-specific reader: SSH entries scrape the gateway's log, MQTT entries do an
-fn-03 read over the broker. Writes go over MQTT (`self.mqtt`). The weekly
-schedule is always read over MQTT, whatever the read source — the daemon never
-reads that block on its own, so it is never in the SSH log. Config changes
-rarely, so this polls slowly (CONTROL_SCAN_INTERVAL).
+Reads the writable config (mode / max-SoC / reserve / excess) and the weekly
+schedule with fn-03 reads over MQTT, and writes over MQTT (`self.mqtt`) — for
+SSH entries too. The gateway's log only holds what the daemon last read: reserve
+/ max-SoC there can be an hour old, and the schedule is never in it, so it can't
+confirm a write. Config changes rarely, so this polls slowly
+(CONTROL_SCAN_INTERVAL).
 
 Real-time schedules: the battery follows its schedule by its own clock, which
 never adjusts for daylight saving or drift. When `realtime` is on, the schedule
@@ -38,7 +38,6 @@ from .const import (
 )
 from .control import MqttControl
 from .timeshift import shift_schedule
-from .transport import Gateway, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,17 +50,6 @@ def control_device_info(entry: ConfigEntry) -> DeviceInfo:
         manufacturer=MANUFACTURER,
         model=MODEL,
     )
-
-
-class SshConfigReader:
-    """Read control config from the gateway's SSH log (fn-03 holding frames)."""
-
-    def __init__(self, gateway: Gateway) -> None:
-        self._gateway = gateway
-
-    async def read_regs(self) -> dict[int, int]:
-        tokens = await self._gateway.read_holding()
-        return control.parse_holding_frames(tokens)
 
 
 class MqttConfigReader:
@@ -88,10 +76,10 @@ class ScheduleDoesNotFit(Exception):
 
 
 class ControlCoordinator(DataUpdateCoordinator[dict]):
-    """Reads config via a source-specific reader; writes go via MQTT."""
+    """Reads config and writes it, both over MQTT."""
 
     def __init__(self, hass: HomeAssistant,
-                 reader: SshConfigReader | MqttConfigReader,
+                 reader: MqttConfigReader,
                  mqtt: MqttControl, entry_id: str = "",
                  clock_tracker: ClockTracker | None = None,
                  realtime: bool = False) -> None:
@@ -120,11 +108,11 @@ class ControlCoordinator(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         try:
             regs = await self._reader.read_regs()
-        except (TransportError, OSError, IndexError, struct.error) as err:
-            # TransportError = SSH; OSError covers the MQTT reader's
-            # TimeoutError / ConnectionError (both OSError subclasses).
-            # IndexError/struct.error catch a malformed or short frame (e.g. a
-            # nb=0 fn-03 reply, or a truncated read) from the MQTT reader.
+        except (OSError, IndexError, struct.error) as err:
+            # OSError covers the MQTT reader's TimeoutError / ConnectionError
+            # (both OSError subclasses). IndexError/struct.error catch a
+            # malformed or short frame (e.g. a nb=0 fn-03 reply, or a truncated
+            # read).
             raise UpdateFailed(f"control read failed: {err}") from err
         # Keep the last-known value for any register not in this batch — config
         # only changes when someone writes it, so a stale-but-unchanged value is
