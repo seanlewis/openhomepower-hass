@@ -129,15 +129,57 @@ def build_schedule(windows: list[dict]) -> bytes:
 
 
 # --- canonical JSON schedule <-> windows -------------------------------------
+class ScheduleError(ValueError):
+    """A set_schedule payload that can't be written safely."""
+
+
+def _hm(value, where: str) -> tuple[int, int]:
+    # "HH:MM" or "HH:MM:SS" — input_datetime helpers and time selectors give seconds
+    try:
+        hour, minute = (int(p) for p in str(value).strip().split(":")[:2])
+    except ValueError:
+        raise ScheduleError(f"{where}: {value!r} isn't a time (expected HH:MM)") from None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ScheduleError(f"{where}: {value!r} is out of range (00:00-23:59)")
+    return hour, minute
+
+
+def _power(value, where: str) -> int:
+    # templated powers (e.g. from an input_number) can arrive as "100.0"
+    try:
+        power = int(float(value))
+    except (TypeError, ValueError):
+        raise ScheduleError(f"{where}: power {value!r} isn't a number") from None
+    if not 0 <= power <= 100:
+        raise ScheduleError(f"{where}: power {power} is out of range (0-100)")
+    return power
+
+
 def schedule_json_to_windows(sched: dict) -> list[dict]:
+    """Validates as it goes: anything out of range would be packed into a byte
+    and written to the battery mangled (power 300 -> 44), so reject it here."""
+    if not isinstance(sched, dict):
+        raise ScheduleError("schedule must be a mapping of day -> categories")
     out = []
-    for day, cats in (sched or {}).items():
+    for day, cats in sched.items():
+        if day not in DAY_ORDER:
+            raise ScheduleError(f"unknown day {day!r} (use {', '.join(DAY_ORDER)})")
+        if not isinstance(cats or {}, dict):
+            raise ScheduleError(f"{day}: expected a mapping of category -> windows")
         for cat, wins in (cats or {}).items():
+            if cat not in CAT_TIME:
+                raise ScheduleError(f"{day}: unknown category {cat!r} "
+                                    f"(use {', '.join(CAT_TIME)})")
+            if not isinstance(wins or [], list):
+                raise ScheduleError(f"{day}.{cat}: expected a list of windows")
             for i, wd in enumerate((wins or [])[:2]):
-                sh, sm = map(int, wd["start"].split(":"))
-                eh, em = map(int, wd["end"].split(":"))
-                out.append(dict(day=day, cat=cat, win=i,
-                                sh=sh, sm=sm, eh=eh, em=em, power=wd["power"]))
+                where = f"{day}.{cat}[{i}]"
+                if not isinstance(wd, dict) or not {"start", "end", "power"} <= wd.keys():
+                    raise ScheduleError(f"{where}: each window needs start, end and power")
+                sh, sm = _hm(wd["start"], f"{where}.start")
+                eh, em = _hm(wd["end"], f"{where}.end")
+                out.append(dict(day=day, cat=cat, win=i, sh=sh, sm=sm, eh=eh, em=em,
+                                power=_power(wd["power"], where)))
     return out
 
 

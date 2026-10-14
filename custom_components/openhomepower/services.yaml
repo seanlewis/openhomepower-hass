@@ -10,7 +10,8 @@ set_schedule:
       description: >-
         Canonical schedule. Per day (mon-sun) and category (grid_charge, pv_charge,
         discharge): up to two windows, each with a start (HH:MM), end (HH:MM) and
-        power (0-100).
+        power (0-100). A window that ends before it starts (23:00-05:00) runs
+        overnight and is split at midnight onto the next day.
       required: true
       example: >-
         {"mon": {"grid_charge": [{"start": "02:00", "end": "05:00", "power": 100}],

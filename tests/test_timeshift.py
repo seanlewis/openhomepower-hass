@@ -62,6 +62,22 @@ def test_midnight_split_windows_merge_when_shifted():
     assert shift_schedule(battery, -120)[0] == real
 
 
+def test_overnight_window_splits_onto_next_day():
+    real = {"mon": {"grid_charge": [_w("23:00", "05:00")]},
+            "sun": {"discharge": [_w("22:00", "01:00", 80)]}}
+    assert shift_schedule(real, 0) == ({
+        "mon": {"grid_charge": [_w("23:00", "23:59")], "discharge": [_w("00:00", "01:00", 80)]},
+        "tue": {"grid_charge": [_w("00:00", "05:00")]},
+        "sun": {"discharge": [_w("22:00", "23:59", 80)]},
+    }, [])
+
+
+def test_overnight_window_counts_against_next_days_windows():
+    real = {"mon": {"grid_charge": [_w("23:00", "05:00")]},
+            "tue": {"grid_charge": [_w("08:00", "09:00"), _w("12:00", "13:00")]}}
+    assert shift_schedule(real, 0)[1] == ["tue grid_charge"]
+
+
 def test_different_power_pieces_do_not_merge():
     real = {"mon": {"discharge": [_w("16:00", "18:00", 100), _w("18:00", "20:00", 50)]}}
     battery, _ = shift_schedule(real, 30)

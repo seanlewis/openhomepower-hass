@@ -24,7 +24,11 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import (
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 
 from . import control
 from .const import (
@@ -59,6 +63,7 @@ from .control_coordinator import (
 from .coordinator import HomepowerCoordinator
 from .mqtt_coordinator import MqttReadCoordinator
 from .registry import RegisterMap
+from .timeshift import shift_schedule
 from .transport import Credentials
 
 _LOGGER = logging.getLogger(__name__)
@@ -187,8 +192,19 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def _set_schedule(call: ServiceCall) -> None:
         # Normalise what was asked for (two windows per type per day at most).
+        try:
+            windows = control.schedule_json_to_windows(call.data["schedule"])
+        except control.ScheduleError as err:
+            raise ServiceValidationError(f"Invalid schedule — {err}") from err
         real = control.schedule_registers_to_json(control.schedule_block_from_frame(
-            control.build_schedule(control.schedule_json_to_windows(call.data["schedule"]))))
+            control.build_schedule(windows)))
+        # The battery can't store a window that crosses midnight, so split any
+        # overnight window (23:00-05:00) onto the next day before anything else.
+        real, problems = shift_schedule(real, 0)
+        if problems:
+            raise ServiceValidationError(
+                "Splitting overnight windows at midnight would need more than two "
+                f"windows of one type on: {', '.join(problems)}.")
         published = False
         for store in hass.data.get(DOMAIN, {}).values():
             mqtt: MqttControl | None = store.get("mqtt")

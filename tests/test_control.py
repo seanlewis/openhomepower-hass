@@ -6,6 +6,8 @@ import importlib.util
 import pathlib
 import sys
 
+import pytest
+
 _PATH = (pathlib.Path(__file__).resolve().parents[1]
          / "custom_components" / "openhomepower" / "control.py")
 _spec = importlib.util.spec_from_file_location("ohp_control", _PATH)
@@ -61,6 +63,39 @@ def test_schedule_json_round_trip():
     regs = [int.from_bytes(payload[i:i + 2], "little") for i in range(0, len(payload), 2)]
     assert control.schedule_registers_to_json(regs) == j
 
+
+
+def test_schedule_json_accepts_helper_states():
+    # input_datetime states render as "HH:MM:SS"; input_number as "100.0"
+    j = {"mon": {"grid_charge": [{"start": "04:00:00", "end": " 06:30:00", "power": "100.0"}]}}
+    assert control.schedule_json_to_windows(j) == [
+        dict(day="mon", cat="grid_charge", win=0, sh=4, sm=0, eh=6, em=30, power=100)]
+
+
+@pytest.mark.parametrize("window, message", [
+    ({"start": "02:00", "end": "05:00", "power": 300}, "out of range"),   # would pack to 44
+    ({"start": "02:00", "end": "05:00", "power": -5}, "out of range"),
+    ({"start": "25:00", "end": "05:00", "power": 100}, "out of range"),
+    ({"start": "02:00", "end": "05:75", "power": 100}, "out of range"),
+    ({"start": "02:00", "end": "24:00", "power": 100}, "out of range"),
+    ({"start": "unavailable", "end": "05:00", "power": 100}, "isn't a time"),
+    ({"start": "02:00", "end": "05:00", "power": "unknown"}, "isn't a number"),
+    ({"start": "02:00", "end": "05:00"}, "needs start, end and power"),
+])
+def test_schedule_json_rejects_bad_windows(window, message):
+    with pytest.raises(control.ScheduleError, match=message):
+        control.schedule_json_to_windows({"mon": {"grid_charge": [window]}})
+
+
+@pytest.mark.parametrize("sched, message", [
+    ({"Monday": {}}, "unknown day"),
+    ({"mon": {"grid": []}}, "unknown category"),
+    ({"mon": {"grid_charge": {"start": "02:00", "end": "05:00", "power": 1}}}, "list of windows"),
+    ('{"mon": {}}', "must be a mapping"),
+])
+def test_schedule_json_rejects_bad_shape(sched, message):
+    with pytest.raises(control.ScheduleError, match=message):
+        control.schedule_json_to_windows(sched)
 
 def test_allowlist_rejects_unknown_register():
     import pytest

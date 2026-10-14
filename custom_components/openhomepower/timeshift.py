@@ -6,7 +6,8 @@ is off (see clock.py) and shifts every window by that many minutes on the way to
 the battery, and back again on the way out, so people only ever see real times.
 
 Shifting can push a window across midnight or across the week boundary (Sunday
-into Monday); such a window is split at midnight, and pieces that meet end-to-end
+into Monday), and a window whose end is before its start (23:00-05:00) runs
+overnight into the next day; either way the window is split at midnight, and pieces that meet end-to-end
 with the same power are merged. The battery can't store "until midnight", so a
 split piece ends at 23:59; an end of 23:59 is read as midnight only when the same
 type of window, at the same power, carries on at 00:00 the next day. That keeps
@@ -59,7 +60,9 @@ def shift_schedule(sched: dict, minutes: int) -> tuple[dict, list[str]]:
             for win in (sched.get(day) or {}).get(cat) or []:
                 start = di * DAY + _minutes(win["start"])
                 end = di * DAY + _end_minutes(sched, di, cat, win)
-                if end <= start:
+                if end < start:                    # overnight: runs into the next day
+                    end += DAY
+                if end == start:
                     continue
                 length = end - start
                 start = (start + minutes) % WEEK

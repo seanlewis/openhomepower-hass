@@ -140,8 +140,15 @@ data:
 
 - **Categories:** `grid_charge` (charge from the grid), `pv_charge` (charge from
   solar), `discharge` (discharge to your loads).
-- Times are 24-hour. `power` is a percentage.
+- Times are 24-hour. `HH:MM:SS` works too, so you can pass a time helper
+  straight in: `start: "{{ states('input_datetime.charge_start') }}"`. `power`
+  is a percentage, and can come from an `input_number`.
+- A window that ends before it starts (`23:00` to `05:00`) runs overnight. It's
+  split at midnight, so it uses a window on the next day too.
 - Up to two windows per category per day.
+- A time or power that's missing or out of range (including a helper that's
+  `unavailable`) stops the action with an error naming the window, and nothing
+  is written.
 - YAML anchors (`&day` / `*day`) keep the repeated-day examples short — expand
   them by hand if you prefer.
 
