@@ -8,10 +8,10 @@ batteries from Home Assistant.**
 > ⚠️ Not affiliated with, endorsed by, or supported by Energizer, 8 Star Energy
 > or Enertek Holdings. Unofficial software, provided as-is.
 
-Enertek has effectively abandoned the Homepower: the iOS app was pulled, the
-product is discontinued, and owners report its cloud being offline for weeks at
-a time. This integration talks to the battery **directly on your network** and
-gives you back:
+Enertek has abandoned the Homepower: the iOS app was pulled, the product is
+discontinued, and in October 2026 its cloud shut down for good (see
+[below](#enerteks-cloud-has-shut-down-october-2026)). This integration talks to
+the battery **directly on your network** and gives you back:
 
 - State of charge, battery power, solar generation, grid import/export, household load
 - **Daily energy counters for the Energy Dashboard**
@@ -21,8 +21,38 @@ gives you back:
   to paste in
 
 On most units, monitoring needs no Enertek cloud at all. Control, and monitoring
-on units that can only report over MQTT, go through Enertek's broker until you
-[move to your own](#the-broker-and-cutting-the-cord), which takes one click.
+on units that can only report over MQTT, need your own broker:
+[moving to it](#the-broker-and-cutting-the-cord) takes one click.
+
+## Enertek's cloud has shut down (October 2026)
+
+Enertek's domain, enertek.com.au, expired in October 2026, and their MQTT broker
+no longer answers. Here's what that means:
+
+| | Effect |
+| --- | --- |
+| **The battery itself** | Keeps running on the mode, reserve limits and schedule it last stored. It doesn't need the cloud to charge or discharge. |
+| **Enertek app and portal** | No longer work, for anyone. |
+| **Monitoring with the SSH log source** (most units) | Unaffected. |
+| **Control, and the MQTT source** | Only work through your own broker. If you're still on Enertek's, use **Configure → Move to local broker**. |
+| **Already on your own broker** | Update to **0.7.7 or later**, then use **Configure → Reconnect the battery** once. Without it, the battery stops sending data the next time its connection drops, for example after a Home Assistant update or restart. |
+| **Setting up from scratch** | Works. If your battery can only report over MQTT, setup says so and adds it ready to move to your own broker. |
+| **Firmware updates and support from Enertek** | None. |
+
+**Why an already-moved battery is affected.** The battery's gateway looks up
+Enertek's broker address before every connection, even after it has been
+redirected to your broker. With the domain gone, that lookup fails, so the
+battery never reconnects. Reconnect (and Move to local broker, from 0.7.7) adds
+one line to the gateway's `/etc/hosts` so the lookup succeeds. Nothing else on
+the battery changes.
+
+If you set up your broker by hand, or run Home Assistant without add-ons, add
+the line yourself over SSH (`ssh -p 34522 homepower@<battery-ip>`, password
+`123456`), replacing `<broker-ip>` with your broker's address:
+
+```sh
+echo '<broker-ip> in.tm.enertek.com.au # openhomepower' >> /etc/hosts
+```
 
 ## Install
 
@@ -215,7 +245,8 @@ source, only work once the battery is on your own broker:
 Home Assistant sets up the add-on, points the battery at it and confirms it has
 connected. This takes up to 6 minutes. If the battery doesn't connect, the change
 is undone automatically. **Move back to Enertek's broker** in the same menu
-reverses it.
+reverses it, though Enertek's broker no longer answers, so the battery then has
+no broker at all.
 
 **Already on the local broker, and the battery stopped sending data** after a
 Home Assistant update or restart? Use **Configure → Reconnect the battery**
@@ -224,8 +255,8 @@ connects, and since the domain expired that lookup fails. This gives the battery
 its own answer, and re-points it if Home Assistant's address has changed. You
 only need to do it once.
 
-Once moved, the Enertek app and portal stop showing your battery, because it can
-only use one broker. On Docker/Core installs, or if the button reports a problem,
+The Enertek app and portal stopped working when Enertek's cloud shut down, so
+moving costs you nothing there. On Docker/Core installs, or if the button reports a problem,
 the [broker's guide](https://github.com/seanlewis/openhomepower-broker/blob/main/broker/DOCS.md)
 has the same steps to do by hand.
 
