@@ -9,6 +9,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -95,7 +96,8 @@ async def _ssh_derive_broker(host: str, port: int,
         ) as conn:
             result = await conn.run(
                 "uci show we2; echo ---; "
-                "grep -oE 'Enertek/[0-9]+/' /tmp/wemonitor.log 2>/dev/null | head -1",
+                "grep -oE 'Enertek/[0-9]+/' /tmp/wemonitor.log 2>/dev/null | head -1; "
+                "echo ---; uci -q get wireless.we2.sn",
                 timeout=10,
             )
             text = result.stdout or ""
@@ -104,7 +106,10 @@ async def _ssh_derive_broker(host: str, port: int,
                 m = re.search(rf"we2\.mqtt\.{field}='([^']*)'", text)
                 if m:
                     out[key] = m.group(1)
-            m = re.search(r"Enertek/([0-9]+)/", text)
+            # The topic serial, from the log's topics or, if the log has none
+            # (MQTT down since it last rotated), from the gateway's own serial.
+            m = (re.search(r"Enertek/([0-9]+)/", text)
+                 or re.search(r"^([0-9]{6,})\s*$", text.rsplit("---", 1)[-1], re.M))
             if m:
                 out["serial"] = m.group(1)
             if "port" in out and out["port"].isdigit():
@@ -112,6 +117,15 @@ async def _ssh_derive_broker(host: str, port: int,
     except Exception:  # noqa: BLE001 - derivation is best-effort, never fatal
         _LOGGER.debug("could not derive broker settings over SSH", exc_info=True)
     return out
+
+
+def _vendor_down(error: str | None, mqtt_input: dict[str, Any]) -> bool:
+    """The MQTT check failed only because Enertek's broker is gone."""
+    from .local_broker import is_vendor_broker
+
+    return (error == "cannot_connect"
+            and is_vendor_broker(mqtt_input.get(CONF_BROKER_HOST, ""))
+            and bool(str(mqtt_input.get(CONF_TOPIC_SERIAL, "")).strip()))
 
 
 def _fill_broker_fields(user_input: dict[str, Any], derived: dict) -> dict[str, Any]:
@@ -138,6 +152,7 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._discovered: list[str] = []
+        self._vendor_down_input: tuple[dict[str, Any], Credentials | None] = ({}, None)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -150,10 +165,11 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
             source = user_input.get(CONF_READ_SOURCE, DEFAULT_READ_SOURCE)
             if source == READ_SOURCE_MQTT:
                 serial, error = await self._async_probe_mqtt(user_input)
-                if error:
-                    errors["base"] = error
-                else:
+                if not error:
                     return await self._async_create_mqtt_entry(serial, user_input)
+                if _vendor_down(error, user_input):
+                    return await self._async_vendor_down(user_input, None)
+                errors["base"] = error
             elif not host:
                 errors["base"] = "host_required"
             else:
@@ -181,7 +197,9 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
                     serial, error = await self._async_probe_mqtt(mqtt_input)
                     if not error:
                         return await self._async_create_mqtt_entry(
-                            serial, mqtt_input)
+                            serial, mqtt_input, creds)
+                    if _vendor_down(error, mqtt_input):
+                        return await self._async_vendor_down(mqtt_input, creds)
                 errors["base"] = error
             suggested_host = host
             # Preserve what was typed across an error re-render.
@@ -265,23 +283,48 @@ class OpenHomepowerConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_create_mqtt_entry(
-        self, serial: str | None, user_input: dict[str, Any]
+        self, serial: str | None, user_input: dict[str, Any],
+        gateway: Credentials | None = None,
     ) -> ConfigFlowResult:
         await self.async_set_unique_id(
             serial or user_input[CONF_TOPIC_SERIAL].strip())
         self._abort_if_unique_id_configured()
-        return self.async_create_entry(
-            title="Energizer Homepower",
-            data={
-                CONF_READ_SOURCE: READ_SOURCE_MQTT,
-                CONF_BROKER_HOST: user_input[CONF_BROKER_HOST].strip(),
-                CONF_BROKER_PORT: user_input.get(
-                    CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
-                CONF_BROKER_USER: user_input[CONF_BROKER_USER].strip(),
-                CONF_BROKER_PASSWORD: user_input[CONF_BROKER_PASSWORD],
-                CONF_TOPIC_SERIAL: user_input[CONF_TOPIC_SERIAL].strip(),
-            },
-        )
+        data = {
+            CONF_READ_SOURCE: READ_SOURCE_MQTT,
+            CONF_BROKER_HOST: user_input[CONF_BROKER_HOST].strip(),
+            CONF_BROKER_PORT: user_input.get(
+                CONF_BROKER_PORT, DEFAULT_BROKER_PORT),
+            CONF_BROKER_USER: user_input[CONF_BROKER_USER].strip(),
+            CONF_BROKER_PASSWORD: user_input[CONF_BROKER_PASSWORD],
+            CONF_TOPIC_SERIAL: user_input[CONF_TOPIC_SERIAL].strip(),
+        }
+        if gateway is not None:
+            # Not used for reading; it pre-fills the battery's address and SSH
+            # login for the moves between brokers.
+            data.update({CONF_HOST: gateway.host, CONF_PORT: gateway.port,
+                         CONF_USERNAME: gateway.username,
+                         CONF_PASSWORD: gateway.password})
+        return self.async_create_entry(title="Energizer Homepower", data=data)
+
+    async def _async_vendor_down(
+        self, mqtt_input: dict[str, Any], gateway: Credentials | None
+    ) -> ConfigFlowResult:
+        """Enertek's broker is gone, so the MQTT check can't pass. Offer to add
+        the battery anyway, ready to move to the local broker."""
+        self._vendor_down_input = (mqtt_input, gateway)
+        return await self.async_step_vendor_down()
+
+    async def async_step_vendor_down(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        mqtt_input, gateway = self._vendor_down_input
+        if user_input is None:
+            return self.async_show_form(step_id="vendor_down",
+                                        data_schema=vol.Schema({}))
+        _LOGGER.info("adding battery %s without a reading: Enertek's broker is "
+                     "unreachable", mqtt_input[CONF_TOPIC_SERIAL])
+        return await self._async_create_mqtt_entry(
+            str(mqtt_input[CONF_TOPIC_SERIAL]).strip(), mqtt_input, gateway)
 
     async def _async_probe(self, creds: Credentials) -> tuple[str | None, str | None]:
         """Connect and decode once. Returns (serial, error_key)."""
@@ -403,7 +446,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             options.append("schedule")
         if supervised:
             local = self.config_entry.options.get(CONF_LOCAL_BROKER, False)
-            options.append("move_vendor" if local else "move_local")
+            options.extend(["reconnect", "move_vendor"] if local else ["move_local"])
         if len(options) == 1:
             return await self.async_step_settings(user_input)
         return self.async_show_menu(step_id="init", menu_options=options)
@@ -701,7 +744,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             description_placeholders={"error": error},
         )
 
-    async def _async_run_with_progress(self, step_id: str, work) -> ConfigFlowResult | None:
+    async def _async_run_with_progress(self, step_id: str, work,
+                                       action: str = "moving") -> ConfigFlowResult | None:
         """Drive `work` behind a progress screen. Returns None once it's done.
 
         The work runs as a background task shielded from the flow: if the dialog
@@ -717,7 +761,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             self._move_task = self.hass.async_create_task(_wait())
         if not self._move_task.done():
             return self.async_show_progress(
-                step_id=step_id, progress_action="moving",
+                step_id=step_id, progress_action=action,
                 progress_task=self._move_task,
             )
         return None
@@ -750,6 +794,8 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         })
         if vendor is not None:
             opts[CONF_VENDOR_BROKER] = vendor
+        entry = self.config_entry
+        before = (dict(entry.data), dict(entry.options))
         data = dict(self.config_entry.data)
         if data.get(CONF_READ_SOURCE) == READ_SOURCE_MQTT:
             data.update({
@@ -763,6 +809,12 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
             self.config_entry, data=data, options=opts)
         _LOGGER.info("integration now uses the broker at %s:%s (%s)", broker["host"],
                      broker["port"], "local" if local else "Enertek")
+        # The update listener only reloads a loaded entry whose settings changed.
+        # One still retrying setup (its broker was unreachable) has no listener
+        # yet, so reload it here and it picks the battery up straight away.
+        if (entry.state is not ConfigEntryState.LOADED
+                or before == (dict(entry.data), dict(entry.options))):
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     # -- to the local broker --
 
@@ -856,12 +908,14 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
                             "been changed.")
         try:
             await gateway.apply_redirect(local["host"], local["port"])
+            await gateway.apply_hosts(local["host"])
         except MoveError:
-            # Nothing is applied until the reboot, so tidying the file is enough.
-            try:
-                await gateway.remove_redirect()
-            except MoveError:
-                pass
+            # Nothing is applied until the reboot, so tidying the files is enough.
+            for undo in (gateway.remove_redirect, gateway.remove_hosts):
+                try:
+                    await undo()
+                except MoveError:
+                    pass
             raise
         await gateway.reboot()
         _LOGGER.info("move to local broker: waiting for the battery to connect")
@@ -873,6 +927,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         try:
             await gateway.wait_until_back()
             await gateway.remove_redirect()
+            await gateway.remove_hosts()
             await gateway.reboot()
         except MoveError as err:
             _LOGGER.error("move to local broker: rollback failed, the redirect may still "
@@ -896,6 +951,94 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         plan = self._move_plan
         self._save_broker(plan["local"], local=True, vendor=plan["vendor"])
         return self.async_abort(reason="moved_local")
+
+    # -- reconnect (already on the local broker) --
+    # For a battery that should be on the local broker but isn't connecting:
+    # since enertek.com.au expired its lookup fails (see local_broker.py), and
+    # Home Assistant's address may have changed since the move. Adds the hosts
+    # entry, re-points the redirect if needed (a reboot only then), and checks.
+
+    async def async_step_reconnect(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        from .local_broker import LOCAL_BROKER_PORT, GatewayAdmin, MoveError, redirect_rule
+
+        self._move_task = None
+        opts = self.config_entry.options
+        if user_input is None:
+            self._move_host = self.config_entry.data.get(CONF_HOST, "")
+            return self._move_form("reconnect", {}, "", opts.get(CONF_BROKER_HOST, ""))
+
+        self._move_host = user_input[CONF_HOST].strip()
+        ha_ip = user_input[CONF_HA_IP].strip()
+        try:
+            redirect_rule(ha_ip, LOCAL_BROKER_PORT)
+            gateway = GatewayAdmin(self._gateway_login(self._move_host))
+            await gateway.check_include()
+            if not (opts.get(CONF_BROKER_USER) and opts.get(CONF_BROKER_PASSWORD)):
+                raise MoveError("This entry has no local broker login saved. Use Move "
+                                "back to Enertek's broker, then Move to local broker.")
+        except MoveError as err:
+            _LOGGER.warning("reconnect: pre-check failed, nothing changed: %s", err)
+            return self._move_form("reconnect", {"base": "move_check_failed"},
+                                   str(err), ha_ip)
+        self._move_plan = {
+            "gateway": gateway,
+            "local": {"host": ha_ip, "port": LOCAL_BROKER_PORT,
+                      "user": opts[CONF_BROKER_USER], "pwd": opts[CONF_BROKER_PASSWORD],
+                      "serial": str(opts.get(CONF_TOPIC_SERIAL) or opts[CONF_BROKER_USER])},
+        }
+        return await self.async_step_reconnect_run()
+
+    async def async_step_reconnect_run(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        shown = await self._async_run_with_progress("reconnect_run", self._do_reconnect,
+                                                    action="reconnecting")
+        if shown is not None:
+            return shown
+        _, self._move_error = self._move_result()
+        return self.async_show_progress_done(next_step_id="reconnect_done")
+
+    async def _do_reconnect(self) -> None:
+        from .control import BrokerConfig
+        from .local_broker import VERIFY_TIMEOUT, MoveError, battery_answers
+
+        plan = self._move_plan
+        local, gateway = plan["local"], plan["gateway"]
+        cfg = BrokerConfig(host=local["host"], port=local["port"],
+                           username=local["user"], password=local["pwd"],
+                           serial=local["serial"])
+        want = f"{local['host']}:{local['port']}"
+        _LOGGER.info("reconnect: starting (battery %s, broker %s)", gateway.login.host, want)
+        await gateway.apply_hosts(local["host"])
+        live, saved = await gateway.redirect_target()
+        if live == want and saved == want:
+            # The daemon retries every ~10 s, so the hosts entry alone is enough.
+            timeout = 120
+        else:
+            _LOGGER.info("reconnect: redirect is %s (saved %s), re-pointing it at %s",
+                         live, saved, want)
+            await gateway.apply_redirect(local["host"], local["port"])
+            await gateway.reboot()
+            timeout = VERIFY_TIMEOUT
+        if await battery_answers(self.hass, cfg, timeout=timeout):
+            _LOGGER.info("reconnect: done")
+            return
+        raise MoveError(
+            "The battery still isn't connecting to the local broker. Check that the "
+            "broker add-on is running (its Log tab should show the battery), and that "
+            "the Home Assistant address is right. The hosts entry has been left in "
+            "place; it's harmless.")
+
+    async def async_step_reconnect_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if self._move_error:
+            return self.async_abort(reason="move_failed",
+                                    description_placeholders={"error": self._move_error})
+        self._save_broker(self._move_plan["local"], local=True, vendor=None)
+        return self.async_abort(reason="reconnected")
 
     # -- back to Enertek's broker --
 
@@ -951,6 +1094,7 @@ class OpenHomepowerOptionsFlow(OptionsFlow):
         plan = self._move_plan
         _LOGGER.info("move back to Enertek: starting (battery %s)", plan["gateway"].login.host)
         await plan["gateway"].remove_redirect()
+        await plan["gateway"].remove_hosts()
         await plan["gateway"].reboot()
         v = plan["vendor"]
         if not (v.get("host") and v.get("user") and v.get("pwd") and v.get("serial")):

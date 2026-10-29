@@ -9,7 +9,9 @@ import pytest
 
 from openhomepower.local_broker import (
     ADDON_REPO, MoveError, addon_slug_candidates, addon_version_ok, apply_script,
-    merge_addon_options, redirect_rule, remove_script)
+    hosts_apply_script, hosts_line, hosts_remove_script, is_vendor_broker,
+    merge_addon_options,
+    parse_redirect_target, redirect_rule, remove_script)
 
 
 def test_redirect_rule_matches_the_manual_instructions():
@@ -44,6 +46,49 @@ def test_remove_script_leaves_the_rest_of_the_file_alone():
     s = remove_script()
     assert "sed -i '/--dport 1884 -j DNAT/d'" in s
     assert "rm " not in s and ">" not in s.split("sed")[0]
+
+
+
+def test_hosts_line_pins_the_daemons_hostname():
+    assert hosts_line("192.168.1.113") == (
+        "192.168.1.113 in.tm.enertek.com.au # openhomepower")
+
+
+@pytest.mark.parametrize("ip", ["192.168.1.113; reboot", "$(reboot)", "127.0.0.1", ""])
+def test_hosts_line_rejects_anything_but_a_usable_ipv4(ip):
+    with pytest.raises(MoveError):
+        hosts_line(ip)
+
+
+def test_hosts_apply_script_replaces_our_line_only_and_counts():
+    s = hosts_apply_script("10.0.0.5")
+    assert s.startswith("F=/etc/hosts; sed -i '/# openhomepower$/d' \"$F\" && ")
+    assert "echo '10.0.0.5 in.tm.enertek.com.au # openhomepower' >> \"$F\"" in s
+    assert "killall -HUP dnsmasq" in s
+    assert s.endswith("grep -c -- '# openhomepower$' \"$F\"")
+
+
+def test_hosts_remove_script_only_touches_our_line():
+    s = hosts_remove_script()
+    assert "sed -i '/# openhomepower$/d'" in s
+    assert "rm " not in s and ">>" not in s
+
+
+def test_parse_redirect_target():
+    live = "-A OUTPUT -p tcp -m tcp --dport 1884 -j DNAT --to-destination 192.168.1.113:1885"
+    saved = ("iptables -t nat -A OUTPUT -p tcp --dport 1884 -j DNAT "
+             "--to-destination 192.168.1.50:1885")
+    assert parse_redirect_target(f"{live}\n---\n{saved}") == (
+        "192.168.1.113:1885", "192.168.1.50:1885")
+    assert parse_redirect_target("---\n") == (None, None)
+    assert parse_redirect_target("") == (None, None)
+
+@pytest.mark.parametrize("host, vendor", [
+    ("in.tm.enertek.com.au", True), ("IN.TM.ENERTEK.COM.AU.", True),
+    (" enertek.com.au ", True), ("192.168.1.113", False),
+    ("notenertek.com.au", False), ("enertek.com.au.example.org", False), ("", False)])
+def test_is_vendor_broker(host, vendor):
+    assert is_vendor_broker(host) is vendor
 
 
 def test_merge_adds_device_and_battery_login():

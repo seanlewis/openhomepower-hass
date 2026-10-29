@@ -197,8 +197,11 @@ using a cheap power window, raising the reserve before a storm.
 
 Control commands reach the battery through an MQTT broker, which is **Enertek's**
 to begin with. Control also reads the battery's settings back through the broker,
-whichever telemetry source you use, so a change shows straight away. When their
-cloud is down, control stops. To avoid that, move the battery to your own broker:
+whichever telemetry source you use, so a change shows straight away.
+
+**Enertek's cloud is gone.** Their domain (enertek.com.au) expired in October
+2026, and their broker no longer answers. Control, and the MQTT telemetry
+source, only work once the battery is on your own broker:
 
 1. Install the [**OpenHomepower Secure Broker**](https://github.com/seanlewis/openhomepower-broker)
    add-on, **version 0.2.2 or later**: **Settings → Apps → Install app → ⋮ →
@@ -213,6 +216,13 @@ Home Assistant sets up the add-on, points the battery at it and confirms it has
 connected. This takes up to 6 minutes. If the battery doesn't connect, the change
 is undone automatically. **Move back to Enertek's broker** in the same menu
 reverses it.
+
+**Already on the local broker, and the battery stopped sending data** after a
+Home Assistant update or restart? Use **Configure → Reconnect the battery**
+(0.7.7 or later). The battery looks up Enertek's broker address every time it
+connects, and since the domain expired that lookup fails. This gives the battery
+its own answer, and re-points it if Home Assistant's address has changed. You
+only need to do it once.
 
 Once moved, the Enertek app and portal stop showing your battery, because it can
 only use one broker. On Docker/Core installs, or if the button reports a problem,

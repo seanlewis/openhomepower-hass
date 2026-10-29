@@ -6,10 +6,16 @@ its outbound MQTT (port 1884) to the local broker, and a reboot applies it
 cleanly. This is the same rule the manual instructions use, so either route can
 undo the other.
 
+The daemon also looks up Enertek's hostname before every connection, even
+though the redirect then ignores the address. Since enertek.com.au expired
+(October 2026) that lookup fails and the battery never connects, so the
+gateway is also given its own answer for the name in /etc/hosts.
+
 THIS MODULE WRITES TO THE GATEWAY. It is kept apart from transport.py, which is
 read-only by construction. The only things it ever changes are:
   * /etc/firewall.user — adds or removes our one redirect line (the file is
     backed up once, before the first change);
+  * /etc/hosts — adds or removes our one line for Enertek's broker hostname;
   * a reboot, to apply that change;
   * the OpenHomepower broker add-on's options, via the Supervisor.
 
@@ -45,6 +51,18 @@ FIREWALL_USER = "/etc/firewall.user"
 FIREWALL_BACKUP = "/etc/firewall.user.openhomepower.bak"
 RULE_MATCH = "--dport 1884 -j DNAT"   # identifies our line (and a manual one)
 
+HOSTS_FILE = "/etc/hosts"
+# Compiled into the daemon: it dials this name whatever uci we2.mqtt.host says.
+VENDOR_HOSTNAME = "in.tm.enertek.com.au"
+HOSTS_MARK = "# openhomepower"         # identifies our line
+VENDOR_DOMAIN = "enertek.com.au"
+
+
+def is_vendor_broker(host: str) -> bool:
+    """Enertek's own broker. Gone since the domain expired (October 2026)."""
+    host = str(host or "").strip().lower().rstrip(".")
+    return host == VENDOR_DOMAIN or host.endswith("." + VENDOR_DOMAIN)
+
 # Timings. The gateway takes a minute or two to reboot and rejoin Wi-Fi, and the
 # daemon connects to its broker shortly after.
 VERIFY_TIMEOUT = 360
@@ -59,9 +77,8 @@ class MoveError(Exception):
 
 # --- pure helpers ---------------------------------------------------------------
 
-def redirect_rule(ip: str, port: int) -> str:
-    """The iptables line for firewall.user. Validates both parts strictly,
-    because they end up in a shell command on the gateway."""
+def _usable_ip(ip: str) -> ipaddress.IPv4Address:
+    """Validated strictly, because it ends up in a shell command on the gateway."""
     try:
         addr = ipaddress.IPv4Address(ip.strip())
     except ValueError as exc:
@@ -69,6 +86,13 @@ def redirect_rule(ip: str, port: int) -> str:
     if addr.is_loopback or addr.is_unspecified or addr.is_multicast:
         raise MoveError(f"'{ip}' can't be used: the battery must reach this address "
                         "over your network.")
+    return addr
+
+
+def redirect_rule(ip: str, port: int) -> str:
+    """The iptables line for firewall.user. Validates both parts strictly,
+    because they end up in a shell command on the gateway."""
+    addr = _usable_ip(ip)
     port = int(port)
     if not 1 <= port <= 65535:
         raise MoveError(f"'{port}' isn't a valid port.")
@@ -97,6 +121,60 @@ def remove_script() -> str:
         f"sed -i '/{RULE_MATCH}/d' \"$F\" && "
         f"(grep -c -- '{RULE_MATCH}' \"$F\" || true)"
     )
+
+
+def hosts_line(ip: str) -> str:
+    """Our /etc/hosts line. Any reachable address works (the redirect matches on
+    port, not address); Home Assistant's is the honest one to show."""
+    return f"{_usable_ip(ip)} {VENDOR_HOSTNAME} {HOSTS_MARK}"
+
+
+# dnsmasq rereads /etc/hosts on SIGHUP; musl reads it directly, so this is a
+# belt-and-braces step that mustn't fail the command.
+_RELOAD_DNS = "(killall -HUP dnsmasq 2>/dev/null; true)"
+
+
+def hosts_apply_script(ip: str) -> str:
+    """Replace any line of ours in /etc/hosts with one for `ip`, reload DNS, and
+    print how many lines of ours remain (must be 1)."""
+    return (
+        f"F={HOSTS_FILE}; "
+        f"sed -i '/{HOSTS_MARK}$/d' \"$F\" && "
+        f"echo '{hosts_line(ip)}' >> \"$F\" && "
+        f"{_RELOAD_DNS} && "
+        f"grep -c -- '{HOSTS_MARK}$' \"$F\""
+    )
+
+
+def hosts_remove_script() -> str:
+    """Remove our /etc/hosts line, reload DNS, and print how many remain (must be 0)."""
+    return (
+        f"F={HOSTS_FILE}; "
+        f"sed -i '/{HOSTS_MARK}$/d' \"$F\" && "
+        f"{_RELOAD_DNS} && "
+        f"(grep -c -- '{HOSTS_MARK}$' \"$F\" || true)"
+    )
+
+
+# Where the redirect currently sends the battery: the live rule if there is one,
+# else the line waiting in firewall.user for the next boot.
+REDIRECT_TARGET = (
+    f"iptables -t nat -S OUTPUT 2>/dev/null | grep -- '{RULE_MATCH}' | head -1; "
+    f"echo ---; grep -- '{RULE_MATCH}' {FIREWALL_USER} 2>/dev/null | head -1"
+)
+
+
+def parse_redirect_target(out: str) -> tuple[str | None, str | None]:
+    """REDIRECT_TARGET output -> (live 'ip:port', saved 'ip:port')."""
+    live, _, saved = out.partition("---")
+
+    def target(text: str) -> str | None:
+        parts = text.split()
+        if "--to-destination" in parts and parts.index("--to-destination") + 1 < len(parts):
+            return parts[parts.index("--to-destination") + 1]
+        return None
+
+    return target(live), target(saved)
 
 
 # firewall.user only runs at boot if the firewall config includes it (the
@@ -240,6 +318,24 @@ class GatewayAdmin:
                      self.login.host, out or "0")
         if out.splitlines()[-1:] not in (["0"], []):
             raise MoveError(f"Removing the redirect rule didn't take effect ({out!r}).")
+
+    async def apply_hosts(self, ip: str) -> None:
+        out = await self.run(hosts_apply_script(ip))
+        _LOGGER.info("gateway %s: %s now resolves to %s (%s hosts line)",
+                     self.login.host, VENDOR_HOSTNAME, ip, out or "no")
+        if out.splitlines()[-1:] != ["1"]:
+            raise MoveError(f"Writing the hosts entry didn't take effect ({out!r}).")
+
+    async def remove_hosts(self) -> None:
+        out = await self.run(hosts_remove_script())
+        _LOGGER.info("gateway %s: hosts entry removed (%s lines left)",
+                     self.login.host, out or "0")
+        if out.splitlines()[-1:] not in (["0"], []):
+            raise MoveError(f"Removing the hosts entry didn't take effect ({out!r}).")
+
+    async def redirect_target(self) -> tuple[str | None, str | None]:
+        """(live, saved) redirect destinations as 'ip:port', None where absent."""
+        return parse_redirect_target(await self.run(REDIRECT_TARGET))
 
     async def reboot(self) -> None:
         _LOGGER.info("gateway %s: rebooting", self.login.host)

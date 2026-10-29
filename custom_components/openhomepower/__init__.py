@@ -37,6 +37,7 @@ from .const import (
     CONF_BROKER_PORT,
     CONF_BROKER_USER,
     CONF_CONTROL_ENABLED,
+    CONF_LOCAL_BROKER,
     CONF_POLL_SECONDS,
     CONF_READ_SOURCE,
     CONF_REALTIME_SCHEDULE,
@@ -62,6 +63,7 @@ from .control_coordinator import (
 )
 from .coordinator import HomepowerCoordinator
 from .mqtt_coordinator import MqttReadCoordinator
+from .local_broker import is_vendor_broker
 from .registry import RegisterMap
 from .timeshift import shift_schedule
 from .transport import Credentials
@@ -105,6 +107,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # leak a second reader thread.
         if not await coordinator.async_await_first_data(timeout=min(stale, 45)):
             await coordinator.async_shutdown()
+            if entry.options.get(CONF_LOCAL_BROKER):
+                raise ConfigEntryNotReady(
+                    "no telemetry received from the broker yet. If this persists, use "
+                    "Configure → Reconnect the battery")
+            if is_vendor_broker(read_broker.host):
+                raise ConfigEntryNotReady(
+                    "Enertek's broker is unreachable (enertek.com.au expired in October "
+                    "2026). Use Configure → Move to local broker")
             raise ConfigEntryNotReady("no telemetry received from the broker yet")
     else:
         creds = Credentials(
