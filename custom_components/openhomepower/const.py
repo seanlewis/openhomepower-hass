@@ -83,3 +83,10 @@ CONF_REALTIME_SCHEDULE = "realtime_schedule"
 DEFAULT_REALTIME_SCHEDULE = True
 CONF_TIMEZONE = "battery_timezone"       # blank = Home Assistant's time zone
 CLOCK_REWRITE_MINUTES = 5                 # re-write only when the offset moves this much
+
+# Local daily reset: the battery zeroes its own "...today" energy counters on the
+# same DST-less clock, so through NZ daylight time they roll over an hour late.
+# With this on (the default), HA re-buckets each daily counter to its own local
+# midnight instead; turn it off to serve the raw device counter unchanged.
+CONF_LOCAL_DAILY_RESET = "local_daily_reset"
+DEFAULT_LOCAL_DAILY_RESET = True
